@@ -1,6 +1,0 @@
-com.recon.dash
-color ic_launcher_background
-color ic_launcher_foreground
-mipmap ic_launcher
-string app_name
-style Theme_ReconDash
