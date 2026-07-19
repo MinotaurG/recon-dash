@@ -1,0 +1,24 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+key.properties
+
+# APKs and bundles — distributed via releases, not committed.
+*.apk
+*.aab
+*.jks
+*.keystore
+*.log
+*.hprof
+*.dmp
+*.stacktrace
+
+# Claude Code local settings
+.claude/settings.local.json

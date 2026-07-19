@@ -1,0 +1,5 @@
+int color ic_launcher_background 0x0
+int color ic_launcher_foreground 0x0
+int mipmap ic_launcher 0x0
+int string app_name 0x0
+int style Theme_ReconDash 0x0

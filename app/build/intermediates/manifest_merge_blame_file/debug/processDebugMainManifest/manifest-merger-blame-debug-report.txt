@@ -1,0 +1,214 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.recon.dash.debug"
+4    android:versionCode="1"
+5    android:versionName="0.1.0" >
+6
+7    <uses-sdk
+7-->INJECTED
+8        android:minSdkVersion="26"
+8-->INJECTED
+9        android:targetSdkVersion="36" />
+9-->INJECTED
+10
+11    <uses-permission android:name="android.permission.INTERNET" />
+11-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:4:5-67
+11-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:4:22-64
+12    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+12-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:5:5-79
+12-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:5:22-76
+13    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+13-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:6:5-76
+13-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:6:22-73
+14    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+14-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:7:5-79
+14-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:7:22-76
+15    <uses-permission
+15-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:8:5-9:58
+16        android:name="android.permission.NEARBY_WIFI_DEVICES"
+16-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:8:22-75
+17        android:usesPermissionFlags="neverForLocation" />
+17-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:9:9-55
+18    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+18-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:10:5-79
+18-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:10:22-76
+19    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+19-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:11:5-81
+19-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:11:22-78
+20    <uses-permission android:name="android.permission.WAKE_LOCK" />
+20-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:12:5-68
+20-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:12:22-65
+21    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+21-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:13:5-77
+21-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:13:22-74
+22    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+22-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:14:5-94
+22-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:14:22-91
+23    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+23-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:15:5-86
+23-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:15:22-83
+24    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+24-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:16:5-77
+24-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:16:22-74
+25
+26    <!-- OpenGL ES 3.0 required -->
+27    <uses-feature
+27-->[org.maplibre.gl:android-sdk:11.8.0] /Users/adishum/.gradle/caches/9.4.1/transforms/74bae5f9532d00e24c879eb04d804614/transformed/android-sdk-11.8.0/AndroidManifest.xml:7:5-9:35
+28        android:glEsVersion="0x00030000"
+28-->[org.maplibre.gl:android-sdk:11.8.0] /Users/adishum/.gradle/caches/9.4.1/transforms/74bae5f9532d00e24c879eb04d804614/transformed/android-sdk-11.8.0/AndroidManifest.xml:8:9-41
+29        android:required="true" />
+29-->[org.maplibre.gl:android-sdk:11.8.0] /Users/adishum/.gradle/caches/9.4.1/transforms/74bae5f9532d00e24c879eb04d804614/transformed/android-sdk-11.8.0/AndroidManifest.xml:9:9-32
+30    <uses-feature
+30-->[org.maplibre.gl:android-sdk:11.8.0] /Users/adishum/.gradle/caches/9.4.1/transforms/74bae5f9532d00e24c879eb04d804614/transformed/android-sdk-11.8.0/AndroidManifest.xml:10:5-12:36
+31        android:name="android.hardware.wifi"
+31-->[org.maplibre.gl:android-sdk:11.8.0] /Users/adishum/.gradle/caches/9.4.1/transforms/74bae5f9532d00e24c879eb04d804614/transformed/android-sdk-11.8.0/AndroidManifest.xml:11:9-45
+32        android:required="false" />
+32-->[org.maplibre.gl:android-sdk:11.8.0] /Users/adishum/.gradle/caches/9.4.1/transforms/74bae5f9532d00e24c879eb04d804614/transformed/android-sdk-11.8.0/AndroidManifest.xml:12:9-33
+33
+34    <permission
+34-->[androidx.core:core:1.16.0] /Users/adishum/.gradle/caches/9.4.1/transforms/663e6527ed98c53c36515879395ba6e1/transformed/core-1.16.0/AndroidManifest.xml:22:5-24:47
+35        android:name="com.recon.dash.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+35-->[androidx.core:core:1.16.0] /Users/adishum/.gradle/caches/9.4.1/transforms/663e6527ed98c53c36515879395ba6e1/transformed/core-1.16.0/AndroidManifest.xml:23:9-81
+36        android:protectionLevel="signature" />
+36-->[androidx.core:core:1.16.0] /Users/adishum/.gradle/caches/9.4.1/transforms/663e6527ed98c53c36515879395ba6e1/transformed/core-1.16.0/AndroidManifest.xml:24:9-44
+37
+38    <uses-permission android:name="com.recon.dash.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+38-->[androidx.core:core:1.16.0] /Users/adishum/.gradle/caches/9.4.1/transforms/663e6527ed98c53c36515879395ba6e1/transformed/core-1.16.0/AndroidManifest.xml:26:5-97
+38-->[androidx.core:core:1.16.0] /Users/adishum/.gradle/caches/9.4.1/transforms/663e6527ed98c53c36515879395ba6e1/transformed/core-1.16.0/AndroidManifest.xml:26:22-94
+39
+40    <application
+40-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:18:5-36:19
+41        android:name="com.recon.dash.ReconDashApp"
+41-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:19:9-37
+42        android:allowBackup="true"
+42-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:20:9-35
+43        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+43-->[androidx.core:core:1.16.0] /Users/adishum/.gradle/caches/9.4.1/transforms/663e6527ed98c53c36515879395ba6e1/transformed/core-1.16.0/AndroidManifest.xml:28:18-86
+44        android:debuggable="true"
+45        android:extractNativeLibs="false"
+45-->INJECTED
+46        android:icon="@mipmap/ic_launcher"
+46-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:21:9-43
+47        android:label="@string/app_name"
+47-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:22:9-41
+48        android:supportsRtl="true"
+48-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:23:9-35
+49        android:theme="@style/Theme.ReconDash" >
+49-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:24:9-47
+50        <activity
+50-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:26:9-34:20
+51            android:name="com.recon.dash.ui.MainActivity"
+51-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:27:13-44
+52            android:exported="true"
+52-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:28:13-36
+53            android:theme="@style/Theme.ReconDash" >
+53-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:29:13-51
+54            <intent-filter>
+54-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:30:13-33:29
+55                <action android:name="android.intent.action.MAIN" />
+55-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:31:17-69
+55-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:31:25-66
+56
+57                <category android:name="android.intent.category.LAUNCHER" />
+57-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:32:17-77
+57-->/Users/adishum/Developer/recon-dash/app/src/main/AndroidManifest.xml:32:27-74
+58            </intent-filter>
+59        </activity>
+60
+61        <service
+61-->[androidx.room:room-runtime:2.6.1] /Users/adishum/.gradle/caches/9.4.1/transforms/0addd44ec5fc3d02ffc09ae076a250df/transformed/room-runtime-2.6.1/AndroidManifest.xml:24:9-28:63
+62            android:name="androidx.room.MultiInstanceInvalidationService"
+62-->[androidx.room:room-runtime:2.6.1] /Users/adishum/.gradle/caches/9.4.1/transforms/0addd44ec5fc3d02ffc09ae076a250df/transformed/room-runtime-2.6.1/AndroidManifest.xml:25:13-74
+63            android:directBootAware="true"
+63-->[androidx.room:room-runtime:2.6.1] /Users/adishum/.gradle/caches/9.4.1/transforms/0addd44ec5fc3d02ffc09ae076a250df/transformed/room-runtime-2.6.1/AndroidManifest.xml:26:13-43
+64            android:exported="false" />
+64-->[androidx.room:room-runtime:2.6.1] /Users/adishum/.gradle/caches/9.4.1/transforms/0addd44ec5fc3d02ffc09ae076a250df/transformed/room-runtime-2.6.1/AndroidManifest.xml:27:13-37
+65
+66        <activity
+66-->[androidx.compose.ui:ui-tooling-android:1.10.4] /Users/adishum/.gradle/caches/9.4.1/transforms/9a9bff81cc6a62d3e170ece8186b6bae/transformed/ui-tooling/AndroidManifest.xml:23:9-25:39
+67            android:name="androidx.compose.ui.tooling.PreviewActivity"
+67-->[androidx.compose.ui:ui-tooling-android:1.10.4] /Users/adishum/.gradle/caches/9.4.1/transforms/9a9bff81cc6a62d3e170ece8186b6bae/transformed/ui-tooling/AndroidManifest.xml:24:13-71
+68            android:exported="true" />
+68-->[androidx.compose.ui:ui-tooling-android:1.10.4] /Users/adishum/.gradle/caches/9.4.1/transforms/9a9bff81cc6a62d3e170ece8186b6bae/transformed/ui-tooling/AndroidManifest.xml:25:13-36
+69
+70        <provider
+70-->[androidx.emoji2:emoji2:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/0bf0d27bd906665643b4b26271d58c03/transformed/emoji2-1.4.0/AndroidManifest.xml:24:9-32:20
+71            android:name="androidx.startup.InitializationProvider"
+71-->[androidx.emoji2:emoji2:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/0bf0d27bd906665643b4b26271d58c03/transformed/emoji2-1.4.0/AndroidManifest.xml:25:13-67
+72            android:authorities="com.recon.dash.debug.androidx-startup"
+72-->[androidx.emoji2:emoji2:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/0bf0d27bd906665643b4b26271d58c03/transformed/emoji2-1.4.0/AndroidManifest.xml:26:13-68
+73            android:exported="false" >
+73-->[androidx.emoji2:emoji2:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/0bf0d27bd906665643b4b26271d58c03/transformed/emoji2-1.4.0/AndroidManifest.xml:27:13-37
+74            <meta-data
+74-->[androidx.emoji2:emoji2:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/0bf0d27bd906665643b4b26271d58c03/transformed/emoji2-1.4.0/AndroidManifest.xml:29:13-31:52
+75                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+75-->[androidx.emoji2:emoji2:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/0bf0d27bd906665643b4b26271d58c03/transformed/emoji2-1.4.0/AndroidManifest.xml:30:17-75
+76                android:value="androidx.startup" />
+76-->[androidx.emoji2:emoji2:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/0bf0d27bd906665643b4b26271d58c03/transformed/emoji2-1.4.0/AndroidManifest.xml:31:17-49
+77            <meta-data
+77-->[androidx.lifecycle:lifecycle-process:2.9.4] /Users/adishum/.gradle/caches/9.4.1/transforms/5fbbd7e1180053374b37044d46af8c1b/transformed/lifecycle-process-2.9.4/AndroidManifest.xml:29:13-31:52
+78                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+78-->[androidx.lifecycle:lifecycle-process:2.9.4] /Users/adishum/.gradle/caches/9.4.1/transforms/5fbbd7e1180053374b37044d46af8c1b/transformed/lifecycle-process-2.9.4/AndroidManifest.xml:30:17-78
+79                android:value="androidx.startup" />
+79-->[androidx.lifecycle:lifecycle-process:2.9.4] /Users/adishum/.gradle/caches/9.4.1/transforms/5fbbd7e1180053374b37044d46af8c1b/transformed/lifecycle-process-2.9.4/AndroidManifest.xml:31:17-49
+80            <meta-data
+80-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:29:13-31:52
+81                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+81-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:30:17-85
+82                android:value="androidx.startup" />
+82-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:31:17-49
+83        </provider>
+84
+85        <uses-library
+85-->[androidx.window:window:1.5.0] /Users/adishum/.gradle/caches/9.4.1/transforms/c998b4e46f1b6362794fa04c2b7157cc/transformed/window-1.5.0/AndroidManifest.xml:23:9-25:40
+86            android:name="androidx.window.extensions"
+86-->[androidx.window:window:1.5.0] /Users/adishum/.gradle/caches/9.4.1/transforms/c998b4e46f1b6362794fa04c2b7157cc/transformed/window-1.5.0/AndroidManifest.xml:24:13-54
+87            android:required="false" />
+87-->[androidx.window:window:1.5.0] /Users/adishum/.gradle/caches/9.4.1/transforms/c998b4e46f1b6362794fa04c2b7157cc/transformed/window-1.5.0/AndroidManifest.xml:25:13-37
+88        <uses-library
+88-->[androidx.window:window:1.5.0] /Users/adishum/.gradle/caches/9.4.1/transforms/c998b4e46f1b6362794fa04c2b7157cc/transformed/window-1.5.0/AndroidManifest.xml:26:9-28:40
+89            android:name="androidx.window.sidecar"
+89-->[androidx.window:window:1.5.0] /Users/adishum/.gradle/caches/9.4.1/transforms/c998b4e46f1b6362794fa04c2b7157cc/transformed/window-1.5.0/AndroidManifest.xml:27:13-51
+90            android:required="false" />
+90-->[androidx.window:window:1.5.0] /Users/adishum/.gradle/caches/9.4.1/transforms/c998b4e46f1b6362794fa04c2b7157cc/transformed/window-1.5.0/AndroidManifest.xml:28:13-37
+91
+92        <receiver
+92-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:34:9-52:20
+93            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+93-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:35:13-76
+94            android:directBootAware="false"
+94-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:36:13-44
+95            android:enabled="true"
+95-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:37:13-35
+96            android:exported="true"
+96-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:38:13-36
+97            android:permission="android.permission.DUMP" >
+97-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:39:13-57
+98            <intent-filter>
+98-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:40:13-42:29
+99                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+99-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:41:17-91
+99-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:41:25-88
+100            </intent-filter>
+101            <intent-filter>
+101-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:43:13-45:29
+102                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+102-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:44:17-85
+102-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:44:25-82
+103            </intent-filter>
+104            <intent-filter>
+104-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:46:13-48:29
+105                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+105-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:47:17-88
+105-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:47:25-85
+106            </intent-filter>
+107            <intent-filter>
+107-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:49:13-51:29
+108                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+108-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:50:17-95
+108-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/adishum/.gradle/caches/9.4.1/transforms/b24d4e140b1b00a1ad829ac4a83be1fb/transformed/profileinstaller-1.4.0/AndroidManifest.xml:50:25-92
+109            </intent-filter>
+110        </receiver>
+111    </application>
+112
+113</manifest>
