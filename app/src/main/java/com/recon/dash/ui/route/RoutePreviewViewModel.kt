@@ -40,8 +40,8 @@ class RoutePreviewViewModel @Inject constructor(
     private val router = Router(context)
 
     private val destName: String = savedStateHandle.get<String>("destName") ?: "Destination"
-    private val destLat: Double = savedStateHandle.get<String>("destLat")?.toDoubleOrNull() ?: 0.0
-    private val destLng: Double = savedStateHandle.get<String>("destLng")?.toDoubleOrNull() ?: 0.0
+    val destLat: Double = savedStateHandle.get<String>("destLat")?.toDoubleOrNull() ?: 0.0
+    val destLng: Double = savedStateHandle.get<String>("destLng")?.toDoubleOrNull() ?: 0.0
     private val originLat: Double = savedStateHandle.get<String>("originLat")?.toDoubleOrNull() ?: 0.0
     private val originLng: Double = savedStateHandle.get<String>("originLng")?.toDoubleOrNull() ?: 0.0
 

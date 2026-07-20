@@ -8,6 +8,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.recon.dash.ui.history.RideDetailScreen
 import com.recon.dash.ui.history.RideHistoryScreen
 import com.recon.dash.ui.home.HomeScreen
 import com.recon.dash.ui.nav.ActiveNavScreen
@@ -30,6 +31,7 @@ object Routes {
     const val WALLPAPER_PICKER = "wallpaper_picker"
     const val REGION_DOWNLOAD = "region_download"
     const val RIDE_HISTORY = "ride_history"
+    const val RIDE_DETAIL = "ride_detail"
 }
 
 @Composable
@@ -140,7 +142,23 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
             WallpaperPickerScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.RIDE_HISTORY) {
-            RideHistoryScreen(onBack = { navController.popBackStack() })
+            RideHistoryScreen(
+                onBack = { navController.popBackStack() },
+                onRideTap = { rideId -> navController.navigate("${Routes.RIDE_DETAIL}/$rideId") },
+            )
+        }
+        composable(
+            route = "${Routes.RIDE_DETAIL}/{rideId}",
+            arguments = listOf(navArgument("rideId") { type = NavType.StringType }),
+        ) {
+            RideDetailScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateAgain = { lat, lng, name ->
+                    navController.navigate(routePreviewPath(name, lat, lng)) {
+                        popUpTo(Routes.HOME)
+                    }
+                },
+            )
         }
     }
 }

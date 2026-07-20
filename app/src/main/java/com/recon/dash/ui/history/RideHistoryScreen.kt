@@ -29,6 +29,7 @@ import java.util.*
 @Composable
 fun RideHistoryScreen(
     onBack: () -> Unit,
+    onRideTap: (Long) -> Unit = {},
     viewModel: RideHistoryViewModel = hiltViewModel(),
 ) {
     val rides by viewModel.rides.collectAsStateWithLifecycle()
@@ -91,7 +92,7 @@ fun RideHistoryScreen(
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(rides, key = { it.id }) { ride ->
-                    RideCard(ride)
+                    RideCard(ride, onClick = { onRideTap(ride.id) })
                 }
             }
         }
@@ -107,7 +108,7 @@ private fun StatBlock(value: String, label: String) {
 }
 
 @Composable
-private fun RideCard(ride: RideRecord) {
+private fun RideCard(ride: RideRecord, onClick: () -> Unit) {
     val dateFormat = remember { SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()) }
 
     Column(
@@ -115,6 +116,7 @@ private fun RideCard(ride: RideRecord) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(DarkSurface)
+            .clickable(onClick = onClick)
             .padding(16.dp),
     ) {
         Row(

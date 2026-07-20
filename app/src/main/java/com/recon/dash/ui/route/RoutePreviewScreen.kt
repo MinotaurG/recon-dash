@@ -3,7 +3,9 @@ package com.recon.dash.ui.route
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -17,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.recon.dash.ui.map.MapViewComposable
 import com.recon.dash.ui.theme.DarkBackground
 import com.recon.dash.ui.theme.DarkSurface
 import com.recon.dash.ui.theme.GoldAccent
@@ -36,38 +39,47 @@ fun RoutePreviewScreen(
             .fillMaxSize()
             .background(DarkBackground)
             .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 20.dp),
+            .navigationBarsPadding(),
     ) {
-        Spacer(Modifier.height(16.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+        // Map preview
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(200.dp),
         ) {
-            Text(
-                text = "Back",
-                color = GoldAccent,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(end = 16.dp, top = 8.dp, bottom = 8.dp),
+            MapViewComposable(
+                modifier = Modifier.fillMaxSize(),
+                centerLat = viewModel.destLat,
+                centerLng = viewModel.destLng,
+                zoom = 12.0,
             )
+            // Back button overlay
             Text(
-                text = "Route",
-                color = OnSurface,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
+                text = "< Back",
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .padding(start = 16.dp, top = 8.dp)
+                    .clickable(onClick = onBack),
             )
         }
 
-        Spacer(Modifier.height(24.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Spacer(Modifier.height(16.dp))
 
         when (val s = state) {
             is RoutePreviewState.Loading -> LoadingCard()
             is RoutePreviewState.Ready -> ReadyCard(s, onStartNav)
             is RoutePreviewState.Error -> ErrorCard(s.message, onRetry = { viewModel.retry() })
             is RoutePreviewState.NoGraph -> NoGraphCard(onDownload = onDownloadRegion)
+        }
         }
     }
 }
