@@ -1,6 +1,7 @@
 package com.recon.dash.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -16,6 +17,7 @@ import com.recon.dash.ui.search.SearchScreen
 import com.recon.dash.ui.settings.RegionDownloadScreen
 import com.recon.dash.ui.settings.SettingsScreen
 import com.recon.dash.ui.settings.WallpaperPickerScreen
+import com.recon.dash.util.LocationHelper
 
 object Routes {
     const val PERMISSIONS = "permissions"
@@ -32,6 +34,15 @@ object Routes {
 
 @Composable
 fun AppNavigation(navController: NavHostController = rememberNavController()) {
+    val context = LocalContext.current
+
+    fun routePreviewPath(name: String, lat: Double, lng: Double): String {
+        val origin = LocationHelper.getLastKnown(context)
+        val oLat = origin?.lat ?: 0.0
+        val oLng = origin?.lng ?: 0.0
+        return "${Routes.ROUTE_PREVIEW}/$name/$lat/$lng/$oLat/$oLng"
+    }
+
     NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(
@@ -46,9 +57,7 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
             HomeScreen(
                 onSearchTap = { navController.navigate("${Routes.SEARCH}?saveSlot=") },
                 onFavoriteTap = { place ->
-                    navController.navigate(
-                        "${Routes.ROUTE_PREVIEW}/${place.name}/${place.lat}/${place.lng}/0.0/0.0"
-                    )
+                    navController.navigate(routePreviewPath(place.name, place.lat, place.lng))
                 },
                 onFavoriteSlotTap = { slot ->
                     navController.navigate("${Routes.SEARCH}?saveSlot=${slot.name}")
@@ -67,7 +76,7 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
             SearchScreen(
                 onResultTap = { result ->
                     navController.navigate(
-                        "${Routes.ROUTE_PREVIEW}/${result.name}/${result.location.lat}/${result.location.lng}/0.0/0.0"
+                        routePreviewPath(result.name, result.location.lat, result.location.lng)
                     ) {
                         popUpTo(Routes.HOME)
                     }

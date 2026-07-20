@@ -16,6 +16,7 @@ import com.recon.dash.data.DashWallpaperFit
 import com.recon.dash.data.DashWallpaperKind
 import com.recon.dash.data.WallpaperRepository
 import com.recon.dash.media.MediaSessionListener
+import com.recon.dash.ui.theme.ThemeState
 import com.recon.dash.util.DebugLog
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -112,6 +113,7 @@ class DashViewModel @Inject constructor(
 
     fun disconnect() {
         appendLog("Disconnecting")
+        ThemeState.forceRiding = false
         navObserveJob?.cancel(); navObserveJob = null
         bridge?.stopMediaForwarding()
         bridge?.stopNavigation()
@@ -157,6 +159,7 @@ class DashViewModel @Inject constructor(
                     }
                     DashState.STREAMING -> {
                         appendLog("Streaming active (${mode.name})")
+                        ThemeState.forceRiding = true
                         DashKeepAliveService.start(context)
                     }
                     DashState.ERROR -> {
