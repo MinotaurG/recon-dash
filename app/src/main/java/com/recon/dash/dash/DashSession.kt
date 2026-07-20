@@ -19,7 +19,7 @@ enum class DashState { IDLE, CONNECTING, AUTHENTICATING, READY, STREAMING, ERROR
  * The RX loop runs the WHOLE time, answering auth, 09 06 IDR-decoded acks,
  * and 09 00 button events.
  */
-class DashSession(private val scope: CoroutineScope) {
+class DashSession(private val scope: CoroutineScope, private val mode: DashMode = DashMode.DIGITAL) {
     companion object {
         private const val TAG           = "DashSession"
         private const val AUTH_TIMEOUT  = 15_000L
@@ -39,6 +39,7 @@ class DashSession(private val scope: CoroutineScope) {
 
     var onButton: ((Byte) -> Unit)? = null
     var onError:  ((String) -> Unit)? = null
+    var onProtocolEvent: ((String) -> Unit)? = null
 
     @Volatile var destinationName: String = "OpenDash"
 
@@ -96,16 +97,18 @@ class DashSession(private val scope: CoroutineScope) {
      * real guidance is running — the card repeats at 1 Hz and would stomp the
      * activeNavPacket numbers every second.
      */
-    private fun liveRouteCard(projectionOn: Boolean): ByteArray =
-        if (navActive) DashCommands.routeCard(
-            destinationName, projectionOn,
+    private fun liveRouteCard(): ByteArray {
+        val projection = mode == DashMode.DIGITAL
+        return if (navActive) DashCommands.routeCard(
+            destinationName, projection,
             maneuver = navManeuver,
             primaryUnit = navPrimaryUnit,
             totalDist = navTotalDist,
             totalUnit = navTotalUnit,
             etaHHMM = navEta,
         )
-        else DashCommands.routeCard(destinationName, projectionOn)
+        else DashCommands.routeCard(destinationName, projection)
+    }
 
     // ── Public API ────────────────────────────────────────────────────────
 
@@ -118,25 +121,25 @@ class DashSession(private val scope: CoroutineScope) {
     fun startStreaming() {
         if (_state.value != DashState.READY) return
         _state.value = DashState.STREAMING
-        // Projection heartbeat is always needed. Route-card/nav-info keepalives are
-        // only for active navigation; idle wallpaper mode should stay chrome-free.
-        launchProjectionHeartbeat()
+        if (mode == DashMode.DIGITAL) launchProjectionHeartbeat()
         launchRouteCardKeepAlive()
         launchNavInfo()
         launchMediaInfo()
     }
 
-    fun sendRtp(packet: ByteArray) { socket?.sendRtp(packet) }
+    fun sendRtp(packet: ByteArray) {
+        if (mode == DashMode.DIGITAL) socket?.sendRtp(packet)
+    }
 
     fun updateRouteCard(name: String) {
         destinationName = name.ifBlank { "OpenDash" }
-        navActive = false   // new destination — old figures are stale until the next updateNavInfo
+        navActive = false
         navChromeEnabled = destinationName != "OpenDash"
         if (navChromeEnabled && (_state.value == DashState.READY || _state.value == DashState.STREAMING)) {
             scope.launch(Dispatchers.IO) {
-                socket?.send(liveRouteCard(projectionOn = true))
+                socket?.send(liveRouteCard())
             }
-        } else if (_state.value == DashState.READY || _state.value == DashState.STREAMING) {
+        } else if (mode == DashMode.DIGITAL && (_state.value == DashState.READY || _state.value == DashState.STREAMING)) {
             scope.launch(Dispatchers.IO) {
                 socket?.send(DashCommands.projectionStop())
                 delay(40)
@@ -158,8 +161,10 @@ class DashSession(private val scope: CoroutineScope) {
         navActive = false
         navChromeEnabled = false
         socket?.let {
-            runCatching { it.send(DashCommands.projectionStop()) }
-            runCatching { it.send(DashCommands.projectionOff()) }
+            if (mode == DashMode.DIGITAL) {
+                runCatching { it.send(DashCommands.projectionStop()) }
+                runCatching { it.send(DashCommands.projectionOff()) }
+            }
             it.close()
         }
         socket = null
@@ -205,7 +210,12 @@ class DashSession(private val scope: CoroutineScope) {
             }
             DebugLog.i(TAG) { "Authenticated ✓" }
 
-            if (navChromeEnabled) enterNavMode(sock) else enterIdleProjectionMode(sock)
+            when {
+                mode == DashMode.ANALOGUE && navChromeEnabled -> enterAnalogueNavMode(sock)
+                mode == DashMode.ANALOGUE -> {} // no projection, no nav chrome — heartbeat keeps session alive
+                navChromeEnabled -> enterNavMode(sock)
+                else -> enterIdleProjectionMode(sock)
+            }
             _state.value = DashState.READY
             DebugLog.i(TAG) { "READY ✓" }
 
@@ -233,6 +243,19 @@ class DashSession(private val scope: CoroutineScope) {
         sock.send(DashCommands.navStart()); delay(40)                 // z2, ONCE
         sock.send(DashCommands.routeCard(destinationName, projectionOn = true))
         DebugLog.i(TAG) { "Nav mode kick sent" }
+    }
+
+    private suspend fun enterAnalogueNavMode(sock: DashSocket) {
+        sock.send(DashCommands.navContext()); delay(40)
+        sock.send(DashCommands.emptyLists()); delay(40)
+        repeat(4) {
+            sock.send(DashCommands.routeCard(destinationName, projectionOn = false))
+            delay(if (it < 1) 100 else 500)
+        }
+        sock.send(DashCommands.navPlaceholder()); delay(10)
+        sock.send(DashCommands.navStart()); delay(40)
+        sock.send(DashCommands.routeCard(destinationName, projectionOn = false))
+        DebugLog.i(TAG) { "Analogue nav mode kick sent" }
     }
 
     /**
@@ -298,20 +321,22 @@ class DashSession(private val scope: CoroutineScope) {
             if (tlv.type == 0x09 && tlv.sub == 0x06 &&
                 tlv.value.firstOrNull()?.toInt() == 0x55
             ) {
-                sock.send(DashCommands.frameDecodedIdr())
+                if (mode == DashMode.DIGITAL) sock.send(DashCommands.frameDecodedIdr())
                 continue
             }
             // ── 09 04 55: P-frame decoded → q3c.K2 ──
             if (tlv.type == 0x09 && tlv.sub == 0x04 &&
                 tlv.value.firstOrNull()?.toInt() == 0x55
             ) {
-                sock.send(DashCommands.frameDecodedP())
+                if (mode == DashMode.DIGITAL) sock.send(DashCommands.frameDecodedP())
                 continue
             }
             // ── 09 00: button / joystick event → echo ack + notify UI ──
             if (tlv.type == 0x09 && tlv.sub == 0x00 && tlv.value.isNotEmpty()) {
-                val btn = tlv.value.last()  // 0900 0001 <code>
-                DebugLog.i(TAG) { "JOYSTICK 09 00 → code 0x${(btn.toInt() and 0xFF).toString(16).uppercase()}  full=${tlv.value.toHexFull()}" }
+                val btn = tlv.value.last()
+                val msg = "JOYSTICK code=0x${(btn.toInt() and 0xFF).toString(16).uppercase()}"
+                DebugLog.i(TAG) { "$msg  full=${tlv.value.toHexFull()}" }
+                onProtocolEvent?.invoke(msg)
                 sock.send(DashCommands.buttonAck(btn))
                 scope.launch(Dispatchers.Main) { onButton?.invoke(btn) }
                 continue
@@ -333,8 +358,9 @@ class DashSession(private val scope: CoroutineScope) {
             }
             // ── 0C xx: dash → app telemetry (trip/odo/fuel/temp — P1b) ──
             if (tlv.type == 0x0C) {
-                DebugLog.i(TAG) { "DASH TELEMETRY 0C sub=0x%02X (%dB) val=%s"
-                    .format(tlv.sub, tlv.value.size, tlv.value.toHexFull()) }
+                val msg = "TELEMETRY 0C sub=0x%02X (%dB)".format(tlv.sub, tlv.value.size)
+                DebugLog.i(TAG) { "$msg val=${tlv.value.toHexFull()}" }
+                onProtocolEvent?.invoke(msg)
                 continue
             }
             // Log every OTHER incoming event (e.g. joystick in nav view, or the dash's
@@ -371,7 +397,7 @@ class DashSession(private val scope: CoroutineScope) {
         routeCardJob?.cancel()
         routeCardJob = scope.launch(Dispatchers.IO) {
             while (isActive && _state.value == DashState.STREAMING) {
-                if (navChromeEnabled) socket?.send(liveRouteCard(projectionOn = true))
+                if (navChromeEnabled) socket?.send(liveRouteCard())
                 delay(ROUTE_CARD_MS)
             }
         }

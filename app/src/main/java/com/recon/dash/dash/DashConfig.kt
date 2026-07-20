@@ -40,6 +40,11 @@ class DashConfig private constructor(context: Context) {
         get() = prefs.getString(KEY_PASSWORD, DEFAULT_PASSWORD) ?: DEFAULT_PASSWORD
         set(v) = prefs.edit().putString(KEY_PASSWORD, v).apply()
 
+    var mode: DashMode
+        get() = runCatching { DashMode.valueOf(prefs.getString(KEY_MODE, DashMode.DIGITAL.name)!!) }
+            .getOrDefault(DashMode.DIGITAL)
+        set(v) = prefs.edit().putString(KEY_MODE, v.name).apply()
+
     /** True until a specific dash has been identified — connect by prefix discovery. */
     val needsDiscovery: Boolean get() = ssid.isBlank()
 
@@ -94,6 +99,7 @@ class DashConfig private constructor(context: Context) {
         private const val KEY_PREFIX   = "ssid_prefix"
         private const val KEY_SSID     = "ssid"
         private const val KEY_PASSWORD = "password"
+        private const val KEY_MODE     = "dash_mode"
         const val DEFAULT_PREFIX   = "RE_"
         const val DEFAULT_PASSWORD = "12345678"
 
