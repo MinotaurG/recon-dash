@@ -18,8 +18,12 @@ data class Region(
     val id: String,
     val name: String,
     val graphUrl: String,
-    val sizeMb: Int,
-)
+    val tilesUrl: String = "",
+    val graphSizeMb: Int,
+    val tilesSizeMb: Int = 0,
+) {
+    val totalSizeMb: Int get() = graphSizeMb + tilesSizeMb
+}
 
 sealed class DownloadState {
     object Idle : DownloadState()
@@ -44,16 +48,16 @@ class RegionManager @Inject constructor(
     private val graphDir = File(context.filesDir, GRAPH_DIR)
 
     val availableRegions: List<Region> = listOf(
-        Region("karnataka", "Karnataka", "", 80),
-        Region("tamil_nadu", "Tamil Nadu", "", 90),
-        Region("kerala", "Kerala", "", 45),
-        Region("maharashtra", "Maharashtra", "", 180),
-        Region("delhi_ncr", "Delhi NCR", "", 35),
-        Region("rajasthan", "Rajasthan", "", 120),
-        Region("goa", "Goa", "", 15),
-        Region("himachal", "Himachal Pradesh", "", 50),
-        Region("uttarakhand", "Uttarakhand", "", 55),
-        Region("andhra_pradesh", "Andhra Pradesh", "", 100),
+        Region("karnataka", "Karnataka", "", "", graphSizeMb = 80, tilesSizeMb = 60),
+        Region("tamil_nadu", "Tamil Nadu", "", "", graphSizeMb = 90, tilesSizeMb = 70),
+        Region("kerala", "Kerala", "", "", graphSizeMb = 45, tilesSizeMb = 35),
+        Region("maharashtra", "Maharashtra", "", "", graphSizeMb = 180, tilesSizeMb = 120),
+        Region("delhi_ncr", "Delhi NCR", "", "", graphSizeMb = 35, tilesSizeMb = 25),
+        Region("rajasthan", "Rajasthan", "", "", graphSizeMb = 120, tilesSizeMb = 90),
+        Region("goa", "Goa", "", "", graphSizeMb = 15, tilesSizeMb = 10),
+        Region("himachal", "Himachal Pradesh", "", "", graphSizeMb = 50, tilesSizeMb = 40),
+        Region("uttarakhand", "Uttarakhand", "", "", graphSizeMb = 55, tilesSizeMb = 45),
+        Region("andhra_pradesh", "Andhra Pradesh", "", "", graphSizeMb = 100, tilesSizeMb = 75),
     )
 
     fun isGraphInstalled(): Boolean =
@@ -74,7 +78,7 @@ class RegionManager @Inject constructor(
                 readTimeout = 30_000
             }
 
-            val totalBytes = conn.contentLengthLong.takeIf { it > 0 } ?: (region.sizeMb * 1024L * 1024L)
+            val totalBytes = conn.contentLengthLong.takeIf { it > 0 } ?: (region.totalSizeMb * 1024L * 1024L)
             val tempFile = File(context.cacheDir, "region_download.zip")
 
             conn.inputStream.use { input ->

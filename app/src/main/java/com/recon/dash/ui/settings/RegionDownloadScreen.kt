@@ -191,7 +191,7 @@ private fun RegionRow(
         Column {
             Text(text = region.name, color = OnSurface, fontSize = 14.sp)
             Text(
-                text = "~${region.sizeMb} MB",
+                text = "~${region.totalSizeMb} MB (routing ${region.graphSizeMb} + tiles ${region.tilesSizeMb})",
                 color = OnSurface.copy(alpha = 0.4f),
                 fontSize = 12.sp,
             )

@@ -8,6 +8,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.util.LruCache
 import com.recon.dash.dash.nav.GeoPoint
+import com.recon.dash.map.TileSource
 import com.recon.dash.util.DebugLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,25 +33,21 @@ import java.util.concurrent.ConcurrentHashMap
 class TileProvider(context: Context, private val scope: CoroutineScope) {
     companion object {
         private const val TAG = "TileProvider"
-        // Actual Google Maps roadmap tiles (the colours/contrast the rider wants —
-        // distinct building fills, clear white roads). This is Google's tile endpoint;
-        // it's used here for a PERSONAL, single-user, non-distributed build. The
-        // compliant alternative for any public release is Google's Map Tiles API
-        // (session token + the existing MAPS_API_KEY). Format args: (z, x, y).
+        // OSM raster tile server — Play Store compliant, attribution required.
+        // Used only as fallback when PMTiles file is not available.
         private const val URL_TEMPLATE =
-            "https://mt1.google.com/vt/lyrs=m&hl=en&z=%d&x=%d&y=%d"
-        // Browser-like UA so the tile endpoint serves us normally.
+            "https://tile.openstreetmap.org/%d/%d/%d.png"
         private const val USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+            "ReconDash/1.0 (motorcycle-nav; single-user; contact: github.com/MinotaurG)"
         private const val MAX_PREFETCH_TILES = 600
-        private const val MIN_FETCH_GAP_MS = 60L // be gentle on OSM + the radio
+        private const val MIN_FETCH_GAP_MS = 250L // OSM rate limit: max 2 req/s
     }
 
     private val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    // Cache dir per tile source so a source switch doesn't serve stale tiles.
-    private val diskDir = File(context.cacheDir, "tiles_gmaps").apply { mkdirs() }
-    private val memory = LruCache<String, Bitmap>(120)
+    private val diskDir = File(context.cacheDir, "tiles_osm").apply { mkdirs() }
+    private val memory = LruCache<String, Bitmap>(300)
     private val inflight = ConcurrentHashMap.newKeySet<String>()
+    private val pmtiles = TileSource(context)
     @Volatile private var lastFetchAt = 0L
 
     /** Non-blocking: returns the cached tile, else kicks off async load. */
@@ -62,10 +59,18 @@ class TileProvider(context: Context, private val scope: CoroutineScope) {
 
         memory.get(key)?.let { return it }
 
+        // Synchronous PMTiles lookup (fast — local file seek)
+        if (pmtiles.hasPMTiles) {
+            val bmp = pmtiles.getTile(z, xw, y)
+            if (bmp != null) {
+                memory.put(key, bmp)
+                return bmp
+            }
+        }
+
         if (inflight.add(key)) {
             scope.launch(Dispatchers.IO) {
                 try {
-                    // Standard map tiles (Google-Maps-like look). No per-tile filter — also the cheapest path.
                     val raw = loadDisk(key) ?: fetch(z, xw, y, key)
                     if (raw != null) memory.put(key, raw)
                 } finally {
