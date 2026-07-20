@@ -40,6 +40,8 @@ fun HomeScreen(
 ) {
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val dashConnected by viewModel.dashConnected.collectAsStateWithLifecycle()
+    val nowPlaying by viewModel.nowPlaying.collectAsStateWithLifecycle()
+    val isNavigating by viewModel.isNavigating.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -89,7 +91,14 @@ fun HomeScreen(
             )
         }
 
-        Spacer(Modifier.height(28.dp))
+        // Now Playing card (only when music is active)
+        val np = nowPlaying
+        if (np != null && np.isPlaying) {
+            Spacer(Modifier.height(16.dp))
+            NowPlayingCard(np.title, np.artist)
+        }
+
+        Spacer(Modifier.height(24.dp))
 
         // Home + Office row (always visible)
         Row(
@@ -266,6 +275,46 @@ private fun CustomFavoriteCard(place: FavoritePlace, onClick: () -> Unit) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+@Composable
+private fun NowPlayingCard(title: String, artist: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(DarkSurfaceElevated)
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(GoldAccent.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text = "♪", color = GoldAccent, fontSize = 16.sp)
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = OnSurface,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = artist,
+                color = OnSurfaceDim,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

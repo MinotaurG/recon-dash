@@ -106,6 +106,9 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
                     }
                 },
                 onBack = { navController.popBackStack() },
+                onDownloadRegion = {
+                    navController.navigate(Routes.REGION_DOWNLOAD)
+                },
             )
         }
         composable(

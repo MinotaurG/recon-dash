@@ -26,6 +26,7 @@ import com.recon.dash.ui.theme.OnSurface
 fun RoutePreviewScreen(
     onStartNav: () -> Unit,
     onBack: () -> Unit,
+    onDownloadRegion: () -> Unit = {},
     viewModel: RoutePreviewViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -66,7 +67,7 @@ fun RoutePreviewScreen(
             is RoutePreviewState.Loading -> LoadingCard()
             is RoutePreviewState.Ready -> ReadyCard(s, onStartNav)
             is RoutePreviewState.Error -> ErrorCard(s.message, onRetry = { viewModel.retry() })
-            is RoutePreviewState.NoGraph -> NoGraphCard()
+            is RoutePreviewState.NoGraph -> NoGraphCard(onDownload = onDownloadRegion)
         }
     }
 }
@@ -237,7 +238,7 @@ private fun ErrorCard(message: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun NoGraphCard() {
+private fun NoGraphCard(onDownload: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -256,6 +257,10 @@ private fun NoGraphCard() {
                 color = OnSurface.copy(alpha = 0.5f),
                 fontSize = 13.sp,
             )
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = onDownload) {
+                Text("Download Region", color = GoldAccent)
+            }
         }
     }
 }
