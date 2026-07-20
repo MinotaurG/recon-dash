@@ -65,7 +65,7 @@ fun SettingsScreen(
         SettingsCard {
             SettingsRow(
                 title = "Saved SSID",
-                subtitle = ssid.ifBlank { "Not set — will discover by prefix" },
+                subtitle = ssid.ifBlank { "Not set, will discover by prefix" },
             )
             SettingsRow(
                 title = "Forget dash",

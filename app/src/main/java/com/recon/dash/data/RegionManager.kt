@@ -107,7 +107,7 @@ class RegionManager @Inject constructor(
             DebugLog.i(TAG) { "Region ${region.name} downloaded and installed" }
             Result.success(Unit)
         } catch (e: Exception) {
-            _downloadState.value = DownloadState.Failed("Download failed — ${e.message}")
+            _downloadState.value = DownloadState.Failed("Download failed: ${e.message}")
             DebugLog.e(TAG, { "Download failed: ${e.message}" }, e)
             Result.failure(e)
         }

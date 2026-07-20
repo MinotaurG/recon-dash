@@ -64,7 +64,7 @@ class RoutePreviewViewModel @Inject constructor(
             val loadResult = router.load()
             if (loadResult.isFailure) {
                 _state.value = RoutePreviewState.Error(
-                    "Failed to load routing graph — ${loadResult.exceptionOrNull()?.message}"
+                    "Failed to load routing graph: ${loadResult.exceptionOrNull()?.message}"
                 )
                 return@launch
             }
@@ -91,7 +91,7 @@ class RoutePreviewViewModel @Inject constructor(
                     val msg = when (val err = result.error) {
                         is com.recon.dash.dash.nav.RouterError.GraphNotLoaded -> err.message
                         is com.recon.dash.dash.nav.RouterError.NoRouteFound -> "No route found to destination"
-                        is com.recon.dash.dash.nav.RouterError.RoutingFailed -> "Routing error — ${err.cause.message}"
+                        is com.recon.dash.dash.nav.RouterError.RoutingFailed -> "Routing error: ${err.cause.message}"
                     }
                     _state.value = RoutePreviewState.Error(msg)
                 }

@@ -208,7 +208,7 @@ class DashWifiManager(
                 _state.value = WifiState(
                     status = WifiConnStatus.ERROR,
                     ssid   = pendingSsid,
-                    error  = "Could not connect to '$pendingSsid' — network not found or wrong password",
+                    error  = "Could not connect to '$pendingSsid': network not found or wrong password",
                 )
                 // Don't auto-retry onUnavailable; user must try again
                 wantConnected = false
@@ -220,7 +220,7 @@ class DashWifiManager(
                 _state.value = WifiState(
                     status = WifiConnStatus.REQUESTING,
                     ssid   = pendingSsid,
-                    error  = "Link lost — reconnecting…",
+                    error  = "Link lost, reconnecting...",
                 )
                 if (wantConnected) scheduleReconnect()
             }

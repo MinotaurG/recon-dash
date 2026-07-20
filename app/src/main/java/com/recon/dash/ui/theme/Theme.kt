@@ -10,11 +10,14 @@ private val DarkColorScheme = darkColorScheme(
     tertiary = GoldAccent,
     background = DarkBackground,
     surface = DarkSurface,
+    surfaceVariant = DarkSurfaceElevated,
     onPrimary = DarkBackground,
     onSecondary = DarkBackground,
     onTertiary = DarkBackground,
     onBackground = OnSurface,
     onSurface = OnSurface,
+    outline = Separator,
+    error = Error,
 )
 
 @Composable

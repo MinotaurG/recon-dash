@@ -1,5 +1,6 @@
 package com.recon.dash.ui.home
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -14,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -21,12 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.recon.dash.data.CUSTOM_SLOTS
 import com.recon.dash.data.FavoritePlace
 import com.recon.dash.data.FavoriteSlot
-import com.recon.dash.ui.theme.DarkBackground
-import com.recon.dash.ui.theme.DarkSurface
-import com.recon.dash.ui.theme.GoldAccent
-import com.recon.dash.ui.theme.OnSurface
+import com.recon.dash.ui.theme.*
 
 @Composable
 fun HomeScreen(
@@ -49,207 +49,249 @@ fun HomeScreen(
             .navigationBarsPadding()
             .padding(horizontal = 20.dp),
     ) {
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(20.dp))
 
+        // Header
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "RECON DASH",
+                text = "Recon Dash",
                 color = OnSurface,
-                fontSize = 18.sp,
+                fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 2.sp,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DashIndicator(connected = dashConnected, onClick = onDashTap)
-                SettingsButton(onClick = onSettingsTap)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DashPill(connected = dashConnected, onClick = onDashTap)
+                IconPill(text = "Settings", onClick = onSettingsTap)
             }
         }
 
         Spacer(Modifier.height(24.dp))
 
-        SearchBar(onClick = onSearchTap)
+        // Search bar
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(DarkSurface)
+                .clickable(onClick = onSearchTap)
+                .padding(horizontal = 16.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Text(
+                text = "Where to?",
+                color = OnSurfaceDim,
+                fontSize = 17.sp,
+            )
+        }
 
         Spacer(Modifier.height(28.dp))
 
-        Text(
-            text = "Favourites",
-            color = OnSurface.copy(alpha = 0.6f),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-        )
-        Spacer(Modifier.height(12.dp))
+        // Home + Office row (always visible)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            PinnedFavoriteCard(
+                label = "Home",
+                place = favorites[FavoriteSlot.HOME],
+                onClick = {
+                    favorites[FavoriteSlot.HOME]?.let { onFavoriteTap(it) }
+                        ?: onFavoriteSlotTap(FavoriteSlot.HOME)
+                },
+                modifier = Modifier.weight(1f),
+            )
+            PinnedFavoriteCard(
+                label = "Office",
+                place = favorites[FavoriteSlot.OFFICE],
+                onClick = {
+                    favorites[FavoriteSlot.OFFICE]?.let { onFavoriteTap(it) }
+                        ?: onFavoriteSlotTap(FavoriteSlot.OFFICE)
+                },
+                modifier = Modifier.weight(1f),
+            )
+        }
 
-        FavoritesGrid(
-            favorites = favorites,
-            onFavoriteTap = onFavoriteTap,
-            onEmptySlotTap = onFavoriteSlotTap,
-        )
+        Spacer(Modifier.height(16.dp))
 
-        Spacer(Modifier.height(24.dp))
+        // Custom favorites grid (only show saved ones + add button)
+        val savedCustoms = CUSTOM_SLOTS.filter { favorites.containsKey(it) }
+        val nextEmptySlot = CUSTOM_SLOTS.firstOrNull { !favorites.containsKey(it) }
+        val showAdd = nextEmptySlot != null
 
+        if (savedCustoms.isNotEmpty() || showAdd) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                items(savedCustoms, key = { it.name }) { slot ->
+                    val place = favorites[slot]!!
+                    CustomFavoriteCard(
+                        place = place,
+                        onClick = { onFavoriteTap(place) },
+                    )
+                }
+                if (showAdd) {
+                    item {
+                        AddCard(onClick = { onFavoriteSlotTap(nextEmptySlot!!) })
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        // Ride history link
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(DarkSurface)
                 .clickable(onClick = onRidesTap)
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
-            Text(
-                text = "Ride History",
-                color = OnSurface.copy(alpha = 0.7f),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Ride History",
+                    color = OnSurface,
+                    fontSize = 15.sp,
+                )
+                Text(
+                    text = ">",
+                    color = OnSurfaceDim,
+                    fontSize = 15.sp,
+                )
+            }
         }
+
+        Spacer(Modifier.height(20.dp))
     }
 }
 
 @Composable
-private fun SettingsButton(onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(DarkSurface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "Settings",
-            color = OnSurface.copy(alpha = 0.5f),
-            fontSize = 12.sp,
-        )
-    }
-}
-
-@Composable
-private fun DashIndicator(connected: Boolean, onClick: () -> Unit) {
-    val color = if (connected) Color(0xFF10B981) else OnSurface.copy(alpha = 0.3f)
+private fun DashPill(connected: Boolean, onClick: () -> Unit) {
+    val dotColor by animateColorAsState(
+        if (connected) Success else OnSurfaceDim.copy(alpha = 0.4f),
+        label = "dashDot",
+    )
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(DarkSurface)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(color),
-        )
-        Text(
-            text = if (connected) "Dash" else "Dash",
-            color = OnSurface.copy(alpha = 0.7f),
-            fontSize = 13.sp,
-        )
+        Box(Modifier.size(7.dp).clip(CircleShape).background(dotColor))
+        Text(text = "Dash", color = OnSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }
 
 @Composable
-private fun SearchBar(onClick: () -> Unit) {
+private fun IconPill(text: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .height(52.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(DarkSurface)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp),
-        contentAlignment = Alignment.CenterStart,
+            .padding(horizontal = 14.dp, vertical = 9.dp),
     ) {
-        Text(
-            text = "Where to?",
-            color = OnSurface.copy(alpha = 0.4f),
-            fontSize = 16.sp,
-        )
+        Text(text = text, color = OnSurfaceDim, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }
 
 @Composable
-private fun FavoritesGrid(
-    favorites: Map<FavoriteSlot, FavoritePlace>,
-    onFavoriteTap: (FavoritePlace) -> Unit,
-    onEmptySlotTap: (FavoriteSlot) -> Unit,
-) {
-    val slots = FavoriteSlot.entries
-
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        items(slots, key = { it.name }) { slot ->
-            val place = favorites[slot]
-            FavoriteCard(
-                slot = slot,
-                place = place,
-                onClick = {
-                    if (place != null) onFavoriteTap(place)
-                    else onEmptySlotTap(slot)
-                },
-            )
-        }
-    }
-}
-
-@Composable
-private fun FavoriteCard(
-    slot: FavoriteSlot,
+private fun PinnedFavoriteCard(
+    label: String,
     place: FavoritePlace?,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val label = place?.label ?: slotDefaultLabel(slot)
-    val name = place?.name
-
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
             .background(DarkSurface)
             .clickable(onClick = onClick)
             .padding(16.dp),
     ) {
         Text(
             text = label,
-            color = if (place != null) GoldAccent else OnSurface.copy(alpha = 0.4f),
+            color = if (place != null) GoldAccent else OnSurfaceDim,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = place?.name ?: "Tap to set",
+            color = if (place != null) OnSurface else OnSurfaceDim.copy(alpha = 0.5f),
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun CustomFavoriteCard(place: FavoritePlace, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(DarkSurface)
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+    ) {
+        Text(
+            text = place.label,
+            color = GoldAccent,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
         )
-        if (name != null) {
-            Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = place.name,
+            color = OnSurface,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun AddCard(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(DarkSurface)
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = name,
-                color = OnSurface.copy(alpha = 0.8f),
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                text = "+",
+                color = GoldAccent,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Light,
             )
-        } else {
-            Spacer(Modifier.height(4.dp))
             Text(
-                text = "Tap to set",
-                color = OnSurface.copy(alpha = 0.25f),
+                text = "Add place",
+                color = OnSurfaceDim,
                 fontSize = 12.sp,
             )
         }
     }
-}
-
-private fun slotDefaultLabel(slot: FavoriteSlot): String = when (slot) {
-    FavoriteSlot.HOME -> "Home"
-    FavoriteSlot.OFFICE -> "Office"
-    FavoriteSlot.CUSTOM_1 -> "Custom 1"
-    FavoriteSlot.CUSTOM_2 -> "Custom 2"
-    FavoriteSlot.CUSTOM_3 -> "Custom 3"
-    FavoriteSlot.CUSTOM_4 -> "Custom 4"
-    FavoriteSlot.CUSTOM_5 -> "Custom 5"
 }

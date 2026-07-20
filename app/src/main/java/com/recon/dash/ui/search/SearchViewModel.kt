@@ -77,7 +77,7 @@ class SearchViewModel @Inject constructor(
                 is SearchOutcome.Failure -> {
                     _results.value = emptyList()
                     _error.value = when (outcome.error) {
-                        is SearchError.NetworkFailed -> "Network error — check connection"
+                        is SearchError.NetworkFailed -> "Network error, check connection"
                         is SearchError.ParseFailed -> "Unexpected response"
                         SearchError.EmptyQuery -> null
                     }

@@ -21,11 +21,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.recon.dash.data.FavoriteSlot
 import com.recon.dash.search.SearchResult
 import com.recon.dash.ui.theme.DarkBackground
 import com.recon.dash.ui.theme.DarkSurface
 import com.recon.dash.ui.theme.GoldAccent
 import com.recon.dash.ui.theme.OnSurface
+import com.recon.dash.ui.theme.OnSurfaceDim
 
 @Composable
 fun SearchScreen(
@@ -37,6 +39,7 @@ fun SearchScreen(
     val results by viewModel.results.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    val saveSlot = viewModel.saveToSlot
 
     val focusRequester = remember { FocusRequester() }
 
@@ -50,6 +53,17 @@ fun SearchScreen(
             .navigationBarsPadding(),
     ) {
         Spacer(Modifier.height(16.dp))
+
+        if (saveSlot != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Saving to: ${slotLabel(saveSlot)}",
+                color = GoldAccent,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+        }
 
         Row(
             modifier = Modifier
@@ -91,7 +105,18 @@ fun SearchScreen(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             items(results, key = { "${it.location.lat},${it.location.lng}" }) { result ->
-                ResultRow(result = result, onClick = { onResultTap(result) })
+                ResultRow(
+                    result = result,
+                    saveMode = saveSlot != null,
+                    onClick = {
+                        if (saveSlot != null) {
+                            viewModel.saveAsFavorite(result, saveSlot, slotLabel(saveSlot))
+                            onBack()
+                        } else {
+                            onResultTap(result)
+                        }
+                    },
+                )
             }
         }
     }
@@ -133,26 +158,47 @@ private fun SearchField(
 }
 
 @Composable
-private fun ResultRow(result: SearchResult, onClick: () -> Unit) {
-    Column(
+private fun ResultRow(result: SearchResult, saveMode: Boolean, onClick: () -> Unit) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = result.name,
-            color = OnSurface,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-        )
-        if (result.address.isNotBlank()) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = result.address,
-                color = OnSurface.copy(alpha = 0.5f),
+                text = result.name,
+                color = OnSurface,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            if (result.address.isNotBlank()) {
+                Text(
+                    text = result.address,
+                    color = OnSurfaceDim,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                )
+            }
+        }
+        if (saveMode) {
+            Text(
+                text = "Save",
+                color = GoldAccent,
                 fontSize = 13.sp,
-                maxLines = 1,
+                fontWeight = FontWeight.SemiBold,
             )
         }
     }
+}
+
+private fun slotLabel(slot: FavoriteSlot): String = when (slot) {
+    FavoriteSlot.HOME -> "Home"
+    FavoriteSlot.OFFICE -> "Office"
+    FavoriteSlot.CUSTOM_1 -> "Custom 1"
+    FavoriteSlot.CUSTOM_2 -> "Custom 2"
+    FavoriteSlot.CUSTOM_3 -> "Custom 3"
+    FavoriteSlot.CUSTOM_4 -> "Custom 4"
 }

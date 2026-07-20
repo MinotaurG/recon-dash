@@ -141,7 +141,7 @@ class DashKeepAliveService : Service() {
             @Suppress("DEPRECATION") Notification.Builder(this)
 
         return builder
-            .setContentTitle("OpenDash — streaming to dash")
+            .setContentTitle("Recon Dash: streaming to dash")
             .setContentText("Map is live on the Tripper. Screen can stay off.")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)

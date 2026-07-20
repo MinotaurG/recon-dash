@@ -10,8 +10,14 @@ enum class FavoriteSlot {
     CUSTOM_2,
     CUSTOM_3,
     CUSTOM_4,
-    CUSTOM_5,
 }
+
+val CUSTOM_SLOTS = listOf(
+    FavoriteSlot.CUSTOM_1,
+    FavoriteSlot.CUSTOM_2,
+    FavoriteSlot.CUSTOM_3,
+    FavoriteSlot.CUSTOM_4,
+)
 
 @Entity(tableName = "favorite_places")
 data class FavoritePlace(

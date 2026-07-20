@@ -44,21 +44,26 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
         }
         composable(Routes.HOME) {
             HomeScreen(
-                onSearchTap = { navController.navigate(Routes.SEARCH) },
+                onSearchTap = { navController.navigate("${Routes.SEARCH}?saveSlot=") },
                 onFavoriteTap = { place ->
                     navController.navigate(
                         "${Routes.ROUTE_PREVIEW}/${place.name}/${place.lat}/${place.lng}/0.0/0.0"
                     )
                 },
                 onFavoriteSlotTap = { slot ->
-                    navController.navigate(Routes.SEARCH)
+                    navController.navigate("${Routes.SEARCH}?saveSlot=${slot.name}")
                 },
                 onDashTap = { navController.navigate(Routes.DASH) },
                 onSettingsTap = { navController.navigate(Routes.SETTINGS) },
                 onRidesTap = { navController.navigate(Routes.RIDE_HISTORY) },
             )
         }
-        composable(Routes.SEARCH) {
+        composable(
+            route = "${Routes.SEARCH}?saveSlot={saveSlot}",
+            arguments = listOf(
+                navArgument("saveSlot") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) {
             SearchScreen(
                 onResultTap = { result ->
                     navController.navigate(
