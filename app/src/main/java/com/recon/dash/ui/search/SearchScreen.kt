@@ -1,10 +1,12 @@
 package com.recon.dash.ui.search
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
@@ -104,19 +106,27 @@ fun SearchScreen(
             contentPadding = PaddingValues(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            items(results, key = { "${it.location.lat},${it.location.lng}" }) { result ->
-                ResultRow(
-                    result = result,
-                    saveMode = saveSlot != null,
-                    onClick = {
-                        if (saveSlot != null) {
-                            viewModel.saveAsFavorite(result, saveSlot, slotLabel(saveSlot))
-                            onBack()
-                        } else {
-                            onResultTap(result)
-                        }
-                    },
-                )
+            itemsIndexed(results, key = { _, it -> "${it.location.lat},${it.location.lng}" }) { index, result ->
+                AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn() + slideInVertically(
+                        initialOffsetY = { 20 },
+                        animationSpec = tween(200, delayMillis = index * 30),
+                    ),
+                ) {
+                    ResultRow(
+                        result = result,
+                        saveMode = saveSlot != null,
+                        onClick = {
+                            if (saveSlot != null) {
+                                viewModel.saveAsFavorite(result, saveSlot, slotLabel(saveSlot))
+                                onBack()
+                            } else {
+                                onResultTap(result)
+                            }
+                        },
+                    )
+                }
             }
         }
     }

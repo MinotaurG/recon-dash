@@ -12,3 +12,11 @@ val Separator = Color(0xFF38383A)
 val Success = Color(0xFF30D158)
 val Warning = Color(0xFFFFD60A)
 val Error = Color(0xFFFF453A)
+
+// Favorite tile accent colors
+val TileBlue = Color(0xFF0A84FF)
+val TileGreen = Color(0xFF30D158)
+val TileOrange = Color(0xFFFF9F0A)
+val TilePurple = Color(0xFFBF5AF2)
+val TilePink = Color(0xFFFF375F)
+val TileTeal = Color(0xFF64D2FF)

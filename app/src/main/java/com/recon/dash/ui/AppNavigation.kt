@@ -1,5 +1,6 @@
 package com.recon.dash.ui
 
+import androidx.compose.animation.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
@@ -8,6 +9,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.recon.dash.ui.theme.*
 import com.recon.dash.ui.history.RideDetailScreen
 import com.recon.dash.ui.history.RideHistoryScreen
 import com.recon.dash.ui.home.HomeScreen
@@ -45,7 +47,14 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
         return "${Routes.ROUTE_PREVIEW}/$name/$lat/$lng/$oLat/$oLng"
     }
 
-    NavHost(navController = navController, startDestination = Routes.HOME) {
+    NavHost(
+        navController = navController,
+        startDestination = Routes.HOME,
+        enterTransition = { slideInFromRight() },
+        exitTransition = { fadeOutSmooth() },
+        popEnterTransition = { fadeInSmooth() },
+        popExitTransition = { slideOutToRight() },
+    ) {
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(
                 onAllGranted = {
