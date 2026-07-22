@@ -247,7 +247,7 @@ class MapRenderer(private val tiles: TileProvider) {
 
         // ── Standby when nothing to show (dark text on the light map bg) ──
         if (f.riderLat == null && f.destLat == null) {
-            val msg = "OpenDash · waiting for GPS"
+            val msg = "Recon Dash · waiting for GPS"
             standbyPaint.getTextBounds(msg, 0, msg.length, textBounds)
             canvas.drawText(msg, (w - textBounds.width()) / 2f, h / 2f, standbyPaint)
         }

@@ -35,6 +35,7 @@ fun TestScreen(
     val state by viewModel.connectionState.collectAsStateWithLifecycle()
     val mode by viewModel.mode.collectAsStateWithLifecycle()
     val log by viewModel.protocolLog.collectAsStateWithLifecycle()
+    val pendingPairing by viewModel.pendingPairingSsid.collectAsStateWithLifecycle()
 
     val isIdle = state == DashState.IDLE || state == DashState.ERROR
 
@@ -94,6 +95,41 @@ fun TestScreen(
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
             )
+        }
+
+        // First-time pairing prompt: confirm the discovered dash is the rider's bike.
+        pendingPairing?.let { ssid ->
+            Spacer(Modifier.height(16.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DarkSurface)
+                    .padding(16.dp),
+            ) {
+                Text("Dash found", color = GoldAccent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Pair with \"$ssid\"?",
+                    color = OnSurface,
+                    fontSize = 14.sp,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        onClick = { viewModel.confirmPairing() },
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = GoldAccent, contentColor = DarkBackground),
+                    ) { Text("Pair", fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+                    OutlinedButton(
+                        onClick = { viewModel.rejectPairing() },
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = OnSurface.copy(alpha = 0.7f)),
+                    ) { Text("Cancel", fontSize = 14.sp) }
+                }
+            }
         }
 
         Spacer(Modifier.height(12.dp))

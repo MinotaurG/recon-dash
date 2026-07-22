@@ -65,6 +65,15 @@ class DashConfig private constructor(context: Context) {
         get() = prefs.getString(KEY_GOOGLE_PLACES, "") ?: ""
         set(v) = prefs.edit().putString(KEY_GOOGLE_PLACES, v).apply()
 
+    /**
+     * When true, the dash projects the idle wallpaper while not navigating (OpenDash behavior,
+     * replaces the native RPM screen). When false (default), the dash keeps its own RPM/instrument
+     * screen when idle and only shows projection during navigation.
+     */
+    var projectWhenIdle: Boolean
+        get() = prefs.getBoolean(KEY_PROJECT_IDLE, false)
+        set(v) = prefs.edit().putBoolean(KEY_PROJECT_IDLE, v).apply()
+
     /** True until a specific dash has been identified — connect by prefix discovery. */
     val needsDiscovery: Boolean get() = ssid.isBlank()
 
@@ -125,6 +134,7 @@ class DashConfig private constructor(context: Context) {
         private const val KEY_THEME = "theme_mode"
         private const val KEY_SPEED_ALERT = "speed_alert_kmh"
         private const val KEY_GOOGLE_PLACES = "google_places_key"
+        private const val KEY_PROJECT_IDLE = "project_when_idle"
         const val DEFAULT_PREFIX   = "RE_"
         const val DEFAULT_PASSWORD = "12345678"
 

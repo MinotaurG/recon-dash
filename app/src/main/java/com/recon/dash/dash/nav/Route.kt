@@ -35,6 +35,8 @@ data class Maneuver(
     val location: GeoPoint,
     /** Cumulative distance (m) from the route start to this maneuver's location. */
     val cumulativeMeters: Double,
+    /** Roundabout exit number (Valhalla roundabout_exit_count); 0 when not a roundabout. */
+    val roundaboutExitCount: Int = 0,
 ) {
     /** Dash maneuver glyph byte. CONTINUE (0x0B) is the only verified value. */
     val dashCode: Int get() = 0x0B // TODO: verify other glyph codes on fw 11.63

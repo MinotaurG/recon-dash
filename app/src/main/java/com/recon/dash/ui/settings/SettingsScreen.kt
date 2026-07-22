@@ -43,6 +43,7 @@ fun SettingsScreen(
     val musicApp by viewModel.musicApp.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val speedAlert by viewModel.speedAlert.collectAsStateWithLifecycle()
+    val projectWhenIdle by viewModel.projectWhenIdle.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -174,6 +175,13 @@ fun SettingsScreen(
                 title = "Dash wallpaper",
                 subtitle = "Shown when not navigating",
                 onClick = onWallpaperTap,
+            )
+            SettingsToggleRow(
+                title = "Show wallpaper on dash",
+                subtitle = if (projectWhenIdle) "Replaces the dash RPM screen when idle"
+                           else "Dash keeps its RPM screen; map shows only during navigation",
+                checked = projectWhenIdle,
+                onToggle = { viewModel.toggleProjectWhenIdle() },
             )
         }
 

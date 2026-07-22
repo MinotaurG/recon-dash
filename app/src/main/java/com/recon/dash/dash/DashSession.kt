@@ -19,14 +19,22 @@ enum class DashState { IDLE, CONNECTING, AUTHENTICATING, READY, STREAMING, ERROR
  * The RX loop runs the WHOLE time, answering auth, 09 06 IDR-decoded acks,
  * and 09 00 button events.
  */
-class DashSession(private val scope: CoroutineScope, private val mode: DashMode = DashMode.DIGITAL) {
+class DashSession(
+    private val scope: CoroutineScope,
+    private val mode: DashMode = DashMode.DIGITAL,
+    // When true, digital idle opens the projection window and shows the wallpaper (replaces the
+    // dash's native RPM screen). When false, the dash keeps its own RPM screen when idle.
+    private val projectWhenIdle: Boolean = false,
+) {
     companion object {
         private const val TAG           = "DashSession"
         private const val AUTH_TIMEOUT  = 15_000L
         private const val BURST_PAUSE   = 20L
         private const val PROJ_HB_MS     = 250L   // 4 Hz
         private const val ROUTE_CARD_MS  = 1_000L // 1 Hz keep-alive
-        private const val HOSTNAME       = "OpenDash"
+        private const val HOSTNAME       = "Recon Dash"
+        // Default/idle destination label + sentinel for "no active nav". Shown on the dash.
+        private const val DEFAULT_NAME   = "Recon Dash"
     }
 
     private val _state = MutableStateFlow(DashState.IDLE)
@@ -42,7 +50,7 @@ class DashSession(private val scope: CoroutineScope, private val mode: DashMode 
     var onProtocolEvent: ((String) -> Unit)? = null
     var onTelemetry: ((TelemetryPacket) -> Unit)? = null
 
-    @Volatile var destinationName: String = "OpenDash"
+    @Volatile var destinationName: String = DEFAULT_NAME
 
     private var sessionJob: Job? = null
     private var rxJob: Job? = null
@@ -134,9 +142,9 @@ class DashSession(private val scope: CoroutineScope, private val mode: DashMode 
 
     fun updateRouteCard(name: String) {
         val wasNavigating = navChromeEnabled
-        destinationName = name.ifBlank { "OpenDash" }
+        destinationName = name.ifBlank { DEFAULT_NAME }
         navActive = false
-        navChromeEnabled = destinationName != "OpenDash"
+        navChromeEnabled = destinationName != DEFAULT_NAME
         val live = _state.value == DashState.READY || _state.value == DashState.STREAMING
         if (!live) return
 
@@ -154,12 +162,18 @@ class DashSession(private val scope: CoroutineScope, private val mode: DashMode 
             navChromeEnabled -> scope.launch(Dispatchers.IO) {
                 socket?.send(liveRouteCard())
             }
-            // Navigation STOPPING (nav -> idle): close projection so the dash returns to its
-            // native RPM screen instead of a frozen map. Only in digital mode.
+            // Navigation STOPPING (nav -> idle), digital mode:
+            //  - projectWhenIdle ON  → keep projection open and fall back to the idle wallpaper.
+            //  - projectWhenIdle OFF → close projection so the dash returns to its native RPM
+            //    screen (instead of a frozen map).
             mode == DashMode.DIGITAL && wasNavigating -> scope.launch(Dispatchers.IO) {
-                socket?.send(DashCommands.projectionStop())
-                delay(40)
-                socket?.send(DashCommands.projectionOff())
+                if (projectWhenIdle) {
+                    socket?.let { enterIdleProjectionMode(it) }
+                } else {
+                    socket?.send(DashCommands.projectionStop())
+                    delay(40)
+                    socket?.send(DashCommands.projectionOff())
+                }
             }
         }
     }
@@ -226,11 +240,12 @@ class DashSession(private val scope: CoroutineScope, private val mode: DashMode 
                 mode == DashMode.ANALOGUE && navChromeEnabled -> enterAnalogueNavMode(sock)
                 mode == DashMode.ANALOGUE -> {} // no projection, no nav chrome — heartbeat keeps session alive
                 navChromeEnabled -> enterNavMode(sock)
-                // Digital, but no active navigation: do NOT open the idle projection window.
-                // Projecting when idle takes over the dash and hides the native RPM meter,
-                // and the idle wallpaper feature isn't wanted for now. Leave the dash on its
-                // default (RPM) screen; the heartbeat keeps the session alive, and enterNavMode
-                // opens projection only once navigation actually starts.
+                // Digital, no active navigation:
+                //  - projectWhenIdle ON  → open the projection window to show the wallpaper
+                //    (OpenDash behavior; replaces the dash's native RPM screen).
+                //  - projectWhenIdle OFF → leave the dash on its native RPM screen; projection
+                //    opens only once navigation actually starts (updateRouteCard → enterNavMode).
+                projectWhenIdle -> enterIdleProjectionMode(sock)
                 else -> {}
             }
             _state.value = DashState.READY

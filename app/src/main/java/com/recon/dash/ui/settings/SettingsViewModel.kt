@@ -49,6 +49,15 @@ class SettingsViewModel @Inject constructor(
     private val _speedAlert = MutableStateFlow(config.speedAlertKmh)
     val speedAlert = _speedAlert.asStateFlow()
 
+    private val _projectWhenIdle = MutableStateFlow(config.projectWhenIdle)
+    val projectWhenIdle = _projectWhenIdle.asStateFlow()
+
+    fun toggleProjectWhenIdle() {
+        val next = !_projectWhenIdle.value
+        config.projectWhenIdle = next
+        _projectWhenIdle.value = next
+    }
+
     val customFavorites = favoriteRepo.observeAll()
         .map { list ->
             list.filter { it.slot != FavoriteSlot.HOME && it.slot != FavoriteSlot.OFFICE }

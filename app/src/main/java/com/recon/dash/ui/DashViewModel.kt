@@ -47,6 +47,12 @@ class DashViewModel @Inject constructor(
     private val _protocolLog = MutableStateFlow<List<String>>(emptyList())
     val protocolLog = _protocolLog.asStateFlow()
 
+    // First-time discovery: when we find an RE_* dash we haven't paired with yet, we surface
+    // its exact SSID here and wait for the rider to confirm it's their bike (mirrors OpenDash's
+    // pairing step) before storing + connecting. Null = no pending prompt.
+    private val _pendingPairingSsid = MutableStateFlow<String?>(null)
+    val pendingPairingSsid = _pendingPairingSsid.asStateFlow()
+
     private var wifiManager: DashWifiManager? = null
     private var session: DashSession? = null
     private var wifiCollectJob: Job? = null
@@ -140,29 +146,54 @@ class DashViewModel @Inject constructor(
 
         // We must connect with the EXACT SSID: the dash validates it inside the encrypted
         // auth handshake, and Android 13+ (strict on 15/16) REDACTS the SSID of a network
-        // joined by prefix — so a prefix connect leaves us unable to read the real name and
-        // we hang forever in CONNECTING. Resolve the exact SSID from a WiFi scan first
-        // (this is what OpenDash does); only fall back to prefix if the scan finds nothing.
+        // joined by prefix. So a prefix connect leaves us unable to read the real name and
+        // we hang forever in CONNECTING.
         val prefix = config.ssidPrefix
-        val stored = config.ssid
-        // Resolve the EXACT SSID, in priority order:
-        //   1. Already joined to the dash WiFi (connectionInfo) — the path proven to work on
-        //      Android 16, and the common case (rider joins RE_* in system settings first).
-        //   2. Stored from a previous successful connect.
-        //   3. WiFi scan results.
-        // Only if all three fail do we fall back to a prefix connect (hangs on Android 13+
-        // because the OS redacts the joined SSID from our network callback).
-        val ssid = wifi.activeDashSsid(prefix)
-            ?: stored.takeIf { it.isNotBlank() }
-            ?: wifi.findDashSsid(prefix)
-        if (!ssid.isNullOrBlank()) {
-            config.ssid = ssid
-            appendLog("Connecting to exact SSID -- ${ssid.take(6)}...")
-            wifi.connect(ssid, config.password)
-        } else {
-            appendLog("No exact SSID found -- trying prefix (may fail on Android 13+)")
-            wifi.connect(prefix, config.password, prefixMatch = true)
+        val stored = config.ssid.takeIf { it.isNotBlank() }
+
+        when {
+            // Already paired with this rider's bike before → connect exact immediately.
+            stored != null -> connectWifiExact(wifi, stored)
+            // First time: discover the exact SSID. Prefer the network the phone is already
+            // joined to (connectionInfo — reliable on Android 16), else a WiFi scan.
+            else -> {
+                val discovered = wifi.activeDashSsid(prefix) ?: wifi.findDashSsid(prefix)
+                if (discovered != null) {
+                    // Ask the rider to confirm it's their bike before storing (OpenDash's
+                    // pairing step) — avoids silently pairing to a neighbour's RE_* dash.
+                    appendLog("Found dash -- confirm pairing: ${discovered.take(6)}...")
+                    _pendingPairingSsid.value = discovered
+                    // Stay in CONNECTING visually; confirmPairing()/rejectPairing() resolve it.
+                } else {
+                    // Nothing found. The prefix path can't reliably auth on Android 13+;
+                    // guide the rider to join the dash WiFi once so connectionInfo can read it.
+                    appendLog("No dash found -- join the RE_ WiFi in Settings once, then retry")
+                    wifi.connect(prefix, config.password, prefixMatch = true)
+                }
+            }
         }
+    }
+
+    /** Persist the exact SSID and start the WiFi association with it. */
+    private fun connectWifiExact(wifi: DashWifiManager, ssid: String) {
+        config.ssid = ssid
+        appendLog("Connecting to exact SSID -- ${ssid.take(6)}...")
+        wifi.connect(ssid, config.password)
+    }
+
+    /** Rider confirmed the discovered dash is theirs: store it and connect. */
+    fun confirmPairing() {
+        val ssid = _pendingPairingSsid.value ?: return
+        _pendingPairingSsid.value = null
+        val wifi = wifiManager ?: return
+        connectWifiExact(wifi, ssid)
+    }
+
+    /** Rider declined the discovered dash: cancel the pending connection. */
+    fun rejectPairing() {
+        _pendingPairingSsid.value = null
+        appendLog("Pairing cancelled")
+        disconnect()
     }
 
     fun disconnect() {
@@ -194,7 +225,7 @@ class DashViewModel @Inject constructor(
         session?.let { existing ->
             if (existing.state.value != DashState.IDLE && existing.state.value != DashState.ERROR) return
         }
-        val sess = DashSession(viewModelScope, mode)
+        val sess = DashSession(viewModelScope, mode, projectWhenIdle = config.projectWhenIdle)
         session = sess
 
         sess.onError = { msg ->
@@ -225,6 +256,13 @@ class DashViewModel @Inject constructor(
                     DashState.ERROR -> {
                         appendLog("Session error")
                         releaseDigitalPipeline()
+                        // Auth failed on a STORED SSID → it's likely stale (rider switched
+                        // bikes, or the dash's SSID changed). Clear it so the next connect
+                        // re-discovers instead of retrying the same wrong name forever.
+                        if (config.ssid.isNotBlank()) {
+                            appendLog("Clearing stored SSID after failure -- will re-discover")
+                            config.ssid = ""
+                        }
                     }
                     else -> {}
                 }

@@ -162,7 +162,10 @@ class Router(private val context: Context) {
 
         val geometry = ArrayList<GeoPoint>()
         val maneuvers = ArrayList<Maneuver>()
-        var cumulativeOffset = 0.0
+        // Running distance (m) from route start to the END of each maneuver, computed from
+        // Valhalla's own per-maneuver `length` field (km) rather than re-summing polyline
+        // segments by hand — the hand-computed version drifted and produced wrong distances.
+        var runningMeters = 0.0
 
         for (li in 0 until legs.length()) {
             val leg = legs.getJSONObject(li)
@@ -170,31 +173,37 @@ class Router(private val context: Context) {
             // (NativeGeo), which falls back to PolylineCodec if the .so is unavailable.
             val shape = leg.optString("shape")
             val legPoints = com.recon.dash.util.NativeGeo.decode(shape, precision = 6)
-            val startIndex = geometry.size
+            val startIndex = geometry.size  // per-leg offset into the concatenated shape
             geometry.addAll(legPoints)
 
             val legManeuvers = leg.optJSONArray("maneuvers")
             if (legManeuvers != null) {
                 for (mi in 0 until legManeuvers.length()) {
                     val m = legManeuvers.getJSONObject(mi)
-                    val beginIdx = m.optInt("begin_shape_index", 0)
-                    val globalIdx = (startIndex + beginIdx).coerceIn(0, geometry.size - 1)
-                    val loc = geometry.getOrNull(globalIdx) ?: continue
+                    // begin_shape_index is PER-LEG and inclusive — offset into the global shape.
+                    val beginIdx = (startIndex + m.optInt("begin_shape_index", 0))
+                        .coerceIn(0, geometry.size - 1)
+                    val loc = geometry.getOrNull(beginIdx) ?: continue
                     val type = mapValhallaType(m.optInt("type", 0))
-                    val instruction = m.optString("instruction", "")
-                    val cumFromStart = cumulativeOffset + geometry.take(globalIdx + 1).let { pts ->
-                        var d = 0.0
-                        for (i in startIndex + 1..globalIdx) d += GeoPoint.distMeters(geometry[i - 1], geometry[i])
-                        d
-                    }
+                    // Prefer the verbal instruction (concise, spoken) then the written one.
+                    val instruction = m.optString("verbal_pre_transition_instruction", "")
+                        .ifBlank { m.optString("instruction", "") }
+                    val exitCount = m.optInt("roundabout_exit_count", 0)
+                    // Valhalla `length` is this maneuver's distance in km — the authoritative
+                    // distance-to-next figure. cumulativeMeters = distance to where THIS
+                    // maneuver's leg ends (running sum), so NavEngine's next-maneuver lookup
+                    // and distance-to-turn come straight from Valhalla, not recomputed.
+                    val lengthM = m.optDouble("length", 0.0) * 1000.0
                     maneuvers.add(
                         Maneuver(
                             type = type,
                             instruction = instruction,
                             location = loc,
-                            cumulativeMeters = cumFromStart,
+                            cumulativeMeters = runningMeters,
+                            roundaboutExitCount = exitCount,
                         )
                     )
+                    runningMeters += lengthM
                 }
             }
         }
@@ -219,24 +228,36 @@ class Router(private val context: Context) {
         )
     }
 
-    /** Map Valhalla maneuver type (0-43) to our ManeuverType enum. */
+    /**
+     * Map the Valhalla maneuver `type` integer (verified enum 0-43) to our ManeuverType.
+     * Grouping follows Valhalla's own OSRM serializer turn_modifier logic:
+     *   slight-right group = kSlightRight/kStayRight/kExitRight/kMergeRight
+     *   slight-left group  = kSlightLeft/kStayLeft/kExitLeft/kMergeLeft
+     */
     private fun mapValhallaType(type: Int): ManeuverType = when (type) {
-        1 -> ManeuverType.DEPART           // kStart
-        2 -> ManeuverType.DEPART           // kStartRight
-        3 -> ManeuverType.DEPART           // kStartLeft
-        4, 5, 6 -> ManeuverType.ARRIVE     // kDestination variants
-        9 -> ManeuverType.SLIGHT_RIGHT     // kSlightRight
-        10 -> ManeuverType.TURN_RIGHT      // kRight
-        11 -> ManeuverType.SHARP_RIGHT     // kSharpRight
-        12 -> ManeuverType.UTURN           // kUturnRight
-        13 -> ManeuverType.UTURN           // kUturnLeft
-        14 -> ManeuverType.SHARP_LEFT      // kSharpLeft
-        15 -> ManeuverType.TURN_LEFT       // kLeft
-        16 -> ManeuverType.SLIGHT_LEFT     // kSlightLeft
-        17 -> ManeuverType.CONTINUE        // kRampStraight
-        18, 19 -> ManeuverType.SLIGHT_RIGHT // kRampRight
-        20, 21 -> ManeuverType.SLIGHT_LEFT  // kRampLeft
-        26, 27, 28, 29, 30, 31, 32, 33 -> ManeuverType.ROUNDABOUT // roundabout variants
+        1, 2, 3 -> ManeuverType.DEPART                 // kStart / kStartRight / kStartLeft
+        4, 5, 6 -> ManeuverType.ARRIVE                 // kDestination variants
+        7, 8 -> ManeuverType.CONTINUE                  // kBecomes / kContinue
+        9 -> ManeuverType.SLIGHT_RIGHT                 // kSlightRight
+        10 -> ManeuverType.TURN_RIGHT                  // kRight
+        11 -> ManeuverType.SHARP_RIGHT                 // kSharpRight
+        12, 13 -> ManeuverType.UTURN                   // kUturnRight / kUturnLeft
+        14 -> ManeuverType.SHARP_LEFT                  // kSharpLeft
+        15 -> ManeuverType.TURN_LEFT                   // kLeft
+        16 -> ManeuverType.SLIGHT_LEFT                 // kSlightLeft
+        17 -> ManeuverType.CONTINUE                    // kRampStraight
+        18 -> ManeuverType.SLIGHT_RIGHT                // kRampRight
+        19 -> ManeuverType.SLIGHT_LEFT                 // kRampLeft
+        20 -> ManeuverType.SLIGHT_RIGHT                // kExitRight
+        21 -> ManeuverType.SLIGHT_LEFT                 // kExitLeft
+        22 -> ManeuverType.CONTINUE                    // kStayStraight
+        23 -> ManeuverType.SLIGHT_RIGHT                // kStayRight
+        24 -> ManeuverType.SLIGHT_LEFT                 // kStayLeft
+        25 -> ManeuverType.CONTINUE                    // kMerge (straight)
+        26, 27 -> ManeuverType.ROUNDABOUT              // kRoundaboutEnter / kRoundaboutExit
+        // 28,29 = ferry enter/exit; 30-36 = transit; 39-43 = elevator/steps/escalator/building
+        37 -> ManeuverType.SLIGHT_RIGHT                // kMergeRight
+        38 -> ManeuverType.SLIGHT_LEFT                 // kMergeLeft
         else -> ManeuverType.CONTINUE
     }
 }
