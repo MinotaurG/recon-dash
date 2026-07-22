@@ -35,7 +35,7 @@ class DashViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "DashViewModel"
-        private const val LOG_MAX = 100
+        private const val LOG_MAX = 300
     }
 
     private val _mode = MutableStateFlow(config.mode)
@@ -91,8 +91,43 @@ class DashViewModel @Inject constructor(
             wifi.state.collect { ws ->
                 when (ws.status) {
                     WifiConnStatus.CONNECTED -> {
-                        appendLog("WiFi connected -- starting session")
-                        startSession(currentMode, ws.ssid, wifi.network)
+                        // WiFi CONNECTED can fire more than once (Android 13+ resolves the
+                        // redacted SSID via a later capabilities change; reconnects re-emit).
+                        // Start the dash session ONLY once — a second session opens a second
+                        // RX socket on :2002, and the two RX loops steal each other's packets,
+                        // so the RSA auth reply lands on the wrong loop and auth never completes.
+                        val existing = session
+                        val busy = existing != null &&
+                            existing.state.value != DashState.IDLE &&
+                            existing.state.value != DashState.ERROR
+                        // The dash validates the SSID inside the encrypted handshake, so we must
+                        // have the EXACT resolved SSID — never the bare "RE_" prefix or blank.
+                        val ssid = ws.ssid.trim()
+                        val ssidReady = ssid.isNotBlank() && ssid != config.ssidPrefix
+                        when {
+                            busy -> {}
+                            !ssidReady -> appendLog("WiFi connected -- waiting for exact SSID")
+                            else -> {
+                                appendLog("WiFi connected -- settling network")
+                                // The WiFi CONNECTED signal arrives BEFORE the network is
+                                // actually routable — opening sockets immediately gives
+                                // ENETUNREACH on the auth burst, auth times out, and we churn
+                                // in a reconnect loop. Wait for the link to settle (OpenDash
+                                // does the same 1.2s wait), then re-check we still want it and
+                                // aren't already running before starting the session.
+                                delay(1_200)
+                                val stillWanted = _connectionState.value == DashState.CONNECTING &&
+                                    wifi.state.value.status == WifiConnStatus.CONNECTED
+                                val stillIdle = session.let {
+                                    it == null || it.state.value == DashState.IDLE ||
+                                        it.state.value == DashState.ERROR
+                                }
+                                if (stillWanted && stillIdle) {
+                                    appendLog("Network settled -- starting session")
+                                    startSession(currentMode, ssid, wifi.network)
+                                }
+                            }
+                        }
                     }
                     WifiConnStatus.ERROR -> {
                         appendLog("WiFi error -- ${ws.error}")
@@ -103,11 +138,30 @@ class DashViewModel @Inject constructor(
             }
         }
 
-        val ssid = config.ssid
-        if (ssid.isNotBlank()) {
+        // We must connect with the EXACT SSID: the dash validates it inside the encrypted
+        // auth handshake, and Android 13+ (strict on 15/16) REDACTS the SSID of a network
+        // joined by prefix — so a prefix connect leaves us unable to read the real name and
+        // we hang forever in CONNECTING. Resolve the exact SSID from a WiFi scan first
+        // (this is what OpenDash does); only fall back to prefix if the scan finds nothing.
+        val prefix = config.ssidPrefix
+        val stored = config.ssid
+        // Resolve the EXACT SSID, in priority order:
+        //   1. Already joined to the dash WiFi (connectionInfo) — the path proven to work on
+        //      Android 16, and the common case (rider joins RE_* in system settings first).
+        //   2. Stored from a previous successful connect.
+        //   3. WiFi scan results.
+        // Only if all three fail do we fall back to a prefix connect (hangs on Android 13+
+        // because the OS redacts the joined SSID from our network callback).
+        val ssid = wifi.activeDashSsid(prefix)
+            ?: stored.takeIf { it.isNotBlank() }
+            ?: wifi.findDashSsid(prefix)
+        if (!ssid.isNullOrBlank()) {
+            config.ssid = ssid
+            appendLog("Connecting to exact SSID -- ${ssid.take(6)}...")
             wifi.connect(ssid, config.password)
         } else {
-            wifi.connect(config.ssidPrefix, config.password, prefixMatch = true)
+            appendLog("No exact SSID found -- trying prefix (may fail on Android 13+)")
+            wifi.connect(prefix, config.password, prefixMatch = true)
         }
     }
 
@@ -127,6 +181,7 @@ class DashViewModel @Inject constructor(
         releaseDigitalPipeline()
         DashKeepAliveService.stop(context)
         _connectionState.value = DashState.IDLE
+        com.recon.dash.dash.DashConnectionState.update(DashState.IDLE)
     }
 
     override fun onCleared() {
@@ -135,6 +190,10 @@ class DashViewModel @Inject constructor(
     }
 
     private fun startSession(mode: DashMode, ssid: String, network: android.net.Network?) {
+        // Never run two sessions at once (see the caller): a duplicate RX socket breaks auth.
+        session?.let { existing ->
+            if (existing.state.value != DashState.IDLE && existing.state.value != DashState.ERROR) return
+        }
         val sess = DashSession(viewModelScope, mode)
         session = sess
 
@@ -151,6 +210,7 @@ class DashViewModel @Inject constructor(
         stateCollectJob = viewModelScope.launch {
             sess.state.collect { state ->
                 _connectionState.value = state
+                com.recon.dash.dash.DashConnectionState.update(state)
                 when (state) {
                     DashState.AUTHENTICATING -> appendLog("Authenticating with dash")
                     DashState.READY -> {
@@ -259,16 +319,19 @@ class DashViewModel @Inject constructor(
 
     private fun resolveWallpaperPath() {
         val selected = wallpaperRepo.getSelected()
-        if (selected != null) {
-            val file = java.io.File(context.cacheDir, "wallpaper_current.png")
-            if (!file.exists()) {
-                wallpaperRepo.loadBitmap(selected, DashEncoder.WIDTH, DashEncoder.HEIGHT)?.let { bmp ->
-                    file.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-                    bmp.recycle()
-                }
-            }
-            wallpaperPath = file.absolutePath
+        if (selected == null) {
+            // "None" selected — dash idle screen falls back to the plain dark background.
+            wallpaperPath = null
+            return
         }
+        val file = java.io.File(context.cacheDir, "wallpaper_current.png")
+        if (!file.exists()) {
+            wallpaperRepo.loadBitmap(selected, DashEncoder.WIDTH, DashEncoder.HEIGHT)?.let { bmp ->
+                file.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                bmp.recycle()
+            }
+        }
+        wallpaperPath = file.absolutePath
     }
 
     private fun startRenderLoop(sess: DashSession) {
@@ -277,20 +340,40 @@ class DashViewModel @Inject constructor(
         val idle = idleRenderer
         val intervalMs = 1000L / DashEncoder.FPS
 
+        appendLog("Render loop starting")
         renderJob = viewModelScope.launch(Dispatchers.Default) {
+            var frames = 0
+            var lastLog = SystemClock.elapsedRealtime()
             while (isActive && (sess.state.value == DashState.STREAMING ||
                    sess.state.value == DashState.READY)) {
                 val start = SystemClock.elapsedRealtime()
                 val navigating = navSessionManager.isNavigating.value
                 val pos = navSessionManager.latestPosition.value
+                val route = navSessionManager.activeRoute.value
+                val destName = navSessionManager.destinationName.value
 
                 enc.renderFrame { canvas ->
                     if (navigating && pos != null) {
+                        val geometry = route?.geometry ?: emptyList()
+                        val dest = geometry.lastOrNull()
+                        // Heading toward the next route point so the map orients travel-up
+                        // and the rider arrow points the right way (matches the RE app view).
+                        val heading = headingAlong(geometry, pos.lat, pos.lng)
                         renderer.draw(canvas, MapRenderer.Frame(
                             centerLat = pos.lat,
                             centerLng = pos.lng,
                             zoom = 17,
                             headingUp = true,
+                            heading = heading,
+                            // Passing riderLat/route/dest is what draws the position arrow,
+                            // the blue route line, and clears the "waiting for GPS" banner
+                            // (which showed permanently because these were never provided).
+                            riderLat = pos.lat,
+                            riderLng = pos.lng,
+                            destLat = dest?.lat,
+                            destLng = dest?.lng,
+                            destName = destName.ifBlank { null },
+                            route = geometry,
                         ))
                     } else if (idle != null) {
                         idle.draw(
@@ -309,10 +392,40 @@ class DashViewModel @Inject constructor(
                     }
                 }
                 enc.drain()
+                frames++
+                // Heartbeat log once a second so we can see the loop is alive and whether
+                // it has a position/nav state (diagnosing the "map not streaming" issue).
+                if (start - lastLog >= 1000) {
+                    DebugLog.i(TAG) { "Render: ${frames}f/s navigating=$navigating pos=${pos != null}" }
+                    frames = 0; lastLog = start
+                }
                 val elapsed = SystemClock.elapsedRealtime() - start
                 delay((intervalMs - elapsed).coerceAtLeast(0))
             }
+            DebugLog.w(TAG) { "Render loop ENDED (state=${sess.state.value})" }
         }
+    }
+
+    /**
+     * Bearing (degrees) from the rider toward the closest route point ahead, so the dash map
+     * orients travel-up and the rider arrow points along the route. Falls back to 0 (north-up)
+     * when there's no usable route geometry.
+     */
+    private fun headingAlong(route: List<com.recon.dash.dash.nav.GeoPoint>, lat: Double, lng: Double): Float {
+        if (route.size < 2) return 0f
+        // Find the nearest route vertex, then aim at the one after it.
+        var nearestIdx = 0
+        var nearestD = Double.MAX_VALUE
+        for (i in route.indices) {
+            val d = (route[i].lat - lat) * (route[i].lat - lat) + (route[i].lng - lng) * (route[i].lng - lng)
+            if (d < nearestD) { nearestD = d; nearestIdx = i }
+        }
+        val target = route.getOrNull(nearestIdx + 1) ?: route[nearestIdx]
+        val dLng = Math.toRadians(target.lng - lng)
+        val y = Math.sin(dLng) * Math.cos(Math.toRadians(target.lat))
+        val x = Math.cos(Math.toRadians(lat)) * Math.sin(Math.toRadians(target.lat)) -
+            Math.sin(Math.toRadians(lat)) * Math.cos(Math.toRadians(target.lat)) * Math.cos(dLng)
+        return ((Math.toDegrees(Math.atan2(y, x)) + 360.0) % 360.0).toFloat()
     }
 
     private fun releaseDigitalPipeline() {

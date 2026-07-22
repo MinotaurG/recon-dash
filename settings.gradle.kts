@@ -47,3 +47,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "ReconDash"
 include(":app")
+include(":valhalla")

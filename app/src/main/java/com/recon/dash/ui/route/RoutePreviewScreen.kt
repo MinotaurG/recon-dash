@@ -1,11 +1,16 @@
 package com.recon.dash.ui.route
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,8 +27,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.recon.dash.ui.map.MapViewComposable
 import com.recon.dash.ui.theme.DarkBackground
 import com.recon.dash.ui.theme.DarkSurface
+import com.recon.dash.ui.theme.DarkSurfaceElevated
 import com.recon.dash.ui.theme.GoldAccent
 import com.recon.dash.ui.theme.OnSurface
+import com.recon.dash.ui.theme.OnSurfaceDim
 
 @Composable
 fun RoutePreviewScreen(
@@ -33,6 +40,7 @@ fun RoutePreviewScreen(
     viewModel: RoutePreviewViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val geometry by viewModel.selectedGeometry.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -41,28 +49,19 @@ fun RoutePreviewScreen(
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        // Map preview
+        // Map preview with the selected route drawn + destination pin.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp),
+                .height(260.dp),
         ) {
             MapViewComposable(
                 modifier = Modifier.fillMaxSize(),
                 centerLat = viewModel.destLat,
                 centerLng = viewModel.destLng,
                 zoom = 12.0,
-            )
-            // Back button overlay
-            Text(
-                text = "< Back",
-                color = Color.White,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .statusBarsPadding()
-                    .padding(start = 16.dp, top = 8.dp)
-                    .clickable(onClick = onBack),
+                routeGeometry = geometry,
+                destination = com.recon.dash.dash.nav.GeoPoint(viewModel.destLat, viewModel.destLng),
             )
         }
 
@@ -74,12 +73,19 @@ fun RoutePreviewScreen(
         ) {
             Spacer(Modifier.height(16.dp))
 
-        when (val s = state) {
-            is RoutePreviewState.Loading -> LoadingCard()
-            is RoutePreviewState.Ready -> ReadyCard(s, onStartNav)
-            is RoutePreviewState.Error -> ErrorCard(s.message, onRetry = { viewModel.retry() })
-            is RoutePreviewState.NoGraph -> NoGraphCard(onDownload = onDownloadRegion)
-        }
+            when (val s = state) {
+                is RoutePreviewState.Loading -> LoadingCard()
+                is RoutePreviewState.Ready -> ReadyContent(
+                    state = s,
+                    onStartNav = onStartNav,
+                    onSelectAlternative = { viewModel.selectAlternative(it) },
+                    onToggleAvoidTolls = { viewModel.toggleAvoidTolls() },
+                    onToggleAvoidHighways = { viewModel.toggleAvoidHighways() },
+                    onDownloadRegion = onDownloadRegion,
+                )
+                is RoutePreviewState.Error -> ErrorCard(s.message, onRetry = { viewModel.retry() })
+                is RoutePreviewState.NoGraph -> NoGraphCard(onDownload = onDownloadRegion)
+            }
         }
     }
 }
@@ -115,8 +121,54 @@ private fun LoadingCard() {
 }
 
 @Composable
-private fun ReadyCard(state: RoutePreviewState.Ready, onStartNav: () -> Unit) {
+private fun ReadyContent(
+    state: RoutePreviewState.Ready,
+    onStartNav: () -> Unit,
+    onSelectAlternative: (Int) -> Unit,
+    onToggleAvoidTolls: () -> Unit,
+    onToggleAvoidHighways: () -> Unit,
+    onDownloadRegion: () -> Unit = {},
+) {
     Column {
+        // Offline download suggestion
+        if (state.isOnlineRoute) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onDownloadRegion),
+                colors = CardDefaults.cardColors(containerColor = GoldAccent.copy(alpha = 0.1f)),
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.CloudDownload,
+                        contentDescription = null,
+                        tint = GoldAccent,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Download offline maps",
+                            color = GoldAccent,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Route calculated online. Download region data for offline navigation.",
+                            color = OnSurface.copy(alpha = 0.5f),
+                            fontSize = 11.sp,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+        // Route info card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -142,6 +194,42 @@ private fun ReadyCard(state: RoutePreviewState.Ready, onStartNav: () -> Unit) {
                     StatItem(label = "Turns", value = state.turnCount.toString())
                 }
             }
+        }
+
+        // Alternative routes (only show if more than one)
+        if (state.alternatives.size > 1) {
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                state.alternatives.forEachIndexed { index, alt ->
+                    AlternativeCard(
+                        index = index,
+                        choice = alt,
+                        onClick = { onSelectAlternative(index) },
+                    )
+                }
+            }
+        }
+
+        // Routing option chips
+        Spacer(Modifier.height(12.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ToggleChip(
+                label = "Avoid tolls",
+                selected = state.avoidTolls,
+                onClick = onToggleAvoidTolls,
+            )
+            ToggleChip(
+                label = "Avoid highways",
+                selected = state.avoidHighways,
+                onClick = onToggleAvoidHighways,
+            )
         }
 
         Spacer(Modifier.height(20.dp))
@@ -198,6 +286,85 @@ private fun ReadyCard(state: RoutePreviewState.Ready, onStartNav: () -> Unit) {
                 }
             }
         }
+
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+@Composable
+private fun AlternativeCard(
+    index: Int,
+    choice: RouteChoice,
+    onClick: () -> Unit,
+) {
+    val borderColor = if (choice.isSelected) GoldAccent else Color.Transparent
+    val bgColor = if (choice.isSelected) DarkSurfaceElevated else DarkSurface
+
+    Card(
+        modifier = Modifier
+            .width(140.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = bgColor),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = "Route ${index + 1}",
+                color = if (choice.isSelected) GoldAccent else OnSurfaceDim,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = choice.distanceText,
+                color = OnSurface,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = choice.etaText,
+                color = OnSurfaceDim,
+                fontSize = 13.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToggleChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val bgColor = if (selected) GoldAccent.copy(alpha = 0.15f) else DarkSurface
+    val borderColor = if (selected) GoldAccent.copy(alpha = 0.5f) else OnSurfaceDim.copy(alpha = 0.2f)
+    val textColor = if (selected) GoldAccent else OnSurfaceDim
+
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(bgColor)
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (selected) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = GoldAccent,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        Text(
+            text = label,
+            color = textColor,
+            fontSize = 13.sp,
+        )
     }
 }
 

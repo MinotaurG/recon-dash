@@ -45,6 +45,26 @@ class DashConfig private constructor(context: Context) {
             .getOrDefault(DashMode.DIGITAL)
         set(v) = prefs.edit().putString(KEY_MODE, v.name).apply()
 
+    var musicApp: String
+        get() = prefs.getString(KEY_MUSIC_APP, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_MUSIC_APP, v).apply()
+
+    var visibleCustomSlots: Set<String>
+        get() = prefs.getStringSet(KEY_VISIBLE_SLOTS, null) ?: emptySet()
+        set(v) = prefs.edit().putStringSet(KEY_VISIBLE_SLOTS, v).apply()
+
+    var themeMode: String
+        get() = prefs.getString(KEY_THEME, "AUTO") ?: "AUTO"
+        set(v) = prefs.edit().putString(KEY_THEME, v).apply()
+
+    var speedAlertKmh: Int
+        get() = prefs.getString(KEY_SPEED_ALERT, "0")?.toIntOrNull() ?: 0
+        set(v) = prefs.edit().putString(KEY_SPEED_ALERT, v.toString()).apply()
+
+    var googlePlacesApiKey: String
+        get() = prefs.getString(KEY_GOOGLE_PLACES, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_GOOGLE_PLACES, v).apply()
+
     /** True until a specific dash has been identified — connect by prefix discovery. */
     val needsDiscovery: Boolean get() = ssid.isBlank()
 
@@ -100,6 +120,11 @@ class DashConfig private constructor(context: Context) {
         private const val KEY_SSID     = "ssid"
         private const val KEY_PASSWORD = "password"
         private const val KEY_MODE     = "dash_mode"
+        private const val KEY_MUSIC_APP = "music_app"
+        private const val KEY_VISIBLE_SLOTS = "visible_custom_slots"
+        private const val KEY_THEME = "theme_mode"
+        private const val KEY_SPEED_ALERT = "speed_alert_kmh"
+        private const val KEY_GOOGLE_PLACES = "google_places_key"
         const val DEFAULT_PREFIX   = "RE_"
         const val DEFAULT_PASSWORD = "12345678"
 

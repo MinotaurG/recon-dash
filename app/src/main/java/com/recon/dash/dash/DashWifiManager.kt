@@ -120,6 +120,17 @@ class DashWifiManager(
         DebugLog.w(TAG) { "Scan lookup failed: ${e.message}" }; null
     }
 
+    /**
+     * If the phone is ALREADY joined to a dash network (rider connected to RE_* in system
+     * WiFi settings first), return its exact SSID. Reads WifiManager.connectionInfo, which —
+     * unlike the NetworkCallback's transportInfo — still returns the real SSID on Android 13-16
+     * when ACCESS_FINE_LOCATION is granted and location is on. This lets us connect by EXACT
+     * SSID (what OpenDash does) instead of by prefix, avoiding the redacted-callback hang.
+     */
+    fun activeDashSsid(prefix: String): String? =
+        readActiveWifiSsid()?.takeIf { it.startsWith(prefix) }
+            ?.also { DebugLog.i(TAG) { "Already on dash WiFi '${maskSsid(it)}'" } }
+
     fun disconnect() {
         DebugLog.i(TAG) { "Disconnect requested" }
         wantConnected = false
@@ -229,7 +240,7 @@ class DashWifiManager(
         networkCallback = cb
         try {
             cm.requestNetwork(request, cb, Handler(Looper.getMainLooper()), CONNECT_TIMEOUT)
-            startAndroid11SsidPolling()
+            startSsidResolutionPolling()
         } catch (e: Exception) {
             DebugLog.e(TAG, { "requestNetwork threw: ${e.message}" }, e)
             _state.value = WifiState(
@@ -255,22 +266,38 @@ class DashWifiManager(
         return info.ssid.orEmpty().trim('"').let { if (it == WifiManagerUnknownSsid) "" else it }
     }
 
-    private fun startAndroid11SsidPolling() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return
+    /**
+     * Resolve the connected dash SSID by polling the (deprecated) WifiManager.connectionInfo,
+     * which still returns the real SSID when ACCESS_FINE_LOCATION is granted and location is
+     * on — even on Android 13-16, where the NetworkCallback's transportInfo SSID is REDACTED.
+     *
+     * This MUST run on every Android version. The old `SDK_INT >= S` guard meant Android 12+
+     * had no fallback at all, so a prefix connect (redacted callback) hung forever in
+     * CONNECTING and auth never started. Runs on all versions now.
+     */
+    private fun startSsidResolutionPolling() {
         scope.launch {
-            delay(5_000)
-            repeat(6) { attempt ->
+            // Poll quickly and for longer: association can take a few seconds after the dialog.
+            repeat(30) { attempt ->
+                if (!wantConnected) return@launch
                 if (_state.value.status == WifiConnStatus.CONNECTED && resolvedSsid != null) return@launch
-                findAlreadyConnectedDashNetwork()?.let { (activeNetwork, activeSsid) ->
-                    network = activeNetwork
+                // Read the real SSID via connectionInfo (works with FINE_LOCATION even when the
+                // callback redacts it). Match it against our prefix/exact request, then bind to
+                // the network the onAvailable callback already handed us (a WifiNetworkSpecifier
+                // network won't necessarily appear in cm.allNetworks, so don't require that).
+                val activeSsid = readActiveWifiSsid()?.takeIf(::matchesPendingSsid)
+                val boundNetwork = network ?: findAlreadyConnectedDashNetwork()?.first
+                if (activeSsid != null && boundNetwork != null) {
+                    network = boundNetwork
                     resolvedSsid = activeSsid
-                    DebugLog.i(TAG) { "Android 11 SSID fallback #${attempt + 1} resolved '${maskSsid(activeSsid)}'" }
+                    DebugLog.i(TAG) { "SSID resolved via poll #${attempt + 1}: '${maskSsid(activeSsid)}'" }
                     onSsidResolved?.invoke(activeSsid)
                     _state.value = WifiState(status = WifiConnStatus.CONNECTED, ssid = activeSsid)
                     return@launch
                 }
-                delay(2_000)
+                delay(1_000)
             }
+            DebugLog.w(TAG) { "SSID resolution polling gave up after 30s" }
         }
     }
 

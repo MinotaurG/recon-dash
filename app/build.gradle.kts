@@ -21,6 +21,20 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        val localProps = rootProject.file("local.properties")
+        val placesKey = if (localProps.exists()) {
+            localProps.readLines()
+                .firstOrNull { it.startsWith("GOOGLE_PLACES_KEY=") }
+                ?.substringAfter("=")?.trim() ?: ""
+        } else ""
+        buildConfigField("String", "GOOGLE_PLACES_KEY", "\"$placesKey\"")
+
+        externalNativeBuild {
+            cmake { cppFlags += "-std=c++17" }
+        }
+        // Match the ABIs the Valhalla .so ships for, so both native libs cover the same targets.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
     buildTypes {
@@ -46,6 +60,21 @@ android {
         buildConfig = true
         compose = true
     }
+
+    packaging {
+        resources {
+            excludes += setOf("META-INF/LICENSE.md", "META-INF/NOTICE.md")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    ndkVersion = "28.2.13676358"
 }
 
 kotlin {
@@ -57,6 +86,7 @@ kotlin {
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
@@ -72,8 +102,7 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
-    implementation(libs.graphhopper.core)
-    implementation(libs.slf4j.android)
+    implementation(project(":valhalla"))
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

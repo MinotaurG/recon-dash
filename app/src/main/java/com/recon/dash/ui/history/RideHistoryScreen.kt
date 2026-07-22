@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -23,6 +27,7 @@ import com.recon.dash.ui.theme.DarkBackground
 import com.recon.dash.ui.theme.DarkSurface
 import com.recon.dash.ui.theme.GoldAccent
 import com.recon.dash.ui.theme.OnSurface
+import com.recon.dash.ui.theme.OnSurfaceDim
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -45,21 +50,28 @@ fun RideHistoryScreen(
     ) {
         Spacer(Modifier.height(16.dp))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "Back",
-                color = GoldAccent,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(end = 16.dp, top = 8.dp, bottom = 8.dp),
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
             Text(
                 text = "Ride History",
                 color = OnSurface,
-                fontSize = 18.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
             )
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "Close",
+                    tint = OnSurfaceDim,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
 
         Spacer(Modifier.height(20.dp))

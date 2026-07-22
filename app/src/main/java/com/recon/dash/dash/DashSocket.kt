@@ -83,11 +83,15 @@ class DashSocket(private val network: android.net.Network? = null) : AutoCloseab
         }
     }
 
+    private val rtpSent = AtomicInteger(0)
+
     fun sendRtp(data: ByteArray) {
         try {
             rtpSocket.send(DatagramPacket(data, data.size, dashAddr, RTP_PORT))
+            val n = rtpSent.incrementAndGet()
+            if (n <= 3 || n % 100 == 0) DebugLog.i(TAG) { "RTP sent #$n (${data.size}B →$DASH_IP:$RTP_PORT)" }
         } catch (e: Exception) {
-            DebugLog.d(TAG) { "RTP send failed (link down?): ${e.message}" }
+            DebugLog.w(TAG) { "RTP send FAILED: ${e.message}" }
         }
     }
 

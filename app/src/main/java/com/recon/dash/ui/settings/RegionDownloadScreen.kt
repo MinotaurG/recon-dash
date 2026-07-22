@@ -1,11 +1,14 @@
 package com.recon.dash.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -24,15 +27,17 @@ import com.recon.dash.ui.theme.DarkBackground
 import com.recon.dash.ui.theme.DarkSurface
 import com.recon.dash.ui.theme.GoldAccent
 import com.recon.dash.ui.theme.OnSurface
+import com.recon.dash.ui.theme.OnSurfaceDim
 
 @Composable
 fun RegionDownloadScreen(
     onBack: () -> Unit,
     viewModel: RegionDownloadViewModel = hiltViewModel(),
 ) {
-    val regions by viewModel.regions.collectAsStateWithLifecycle()
+    val regions = viewModel.regions
     val downloadState by viewModel.downloadState.collectAsStateWithLifecycle()
     val installed by viewModel.installed.collectAsStateWithLifecycle()
+    val suggestedId by viewModel.suggestedRegionId.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -44,21 +49,20 @@ fun RegionDownloadScreen(
     ) {
         Spacer(Modifier.height(16.dp))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "Back",
-                color = GoldAccent,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(end = 16.dp, top = 8.dp, bottom = 8.dp),
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
             Text(
                 text = "Region Data",
                 color = OnSurface,
-                fontSize = 18.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
             )
+            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Rounded.Close, contentDescription = "Close", tint = OnSurfaceDim, modifier = Modifier.size(22.dp))
+            }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -115,11 +119,20 @@ fun RegionDownloadScreen(
         )
         Spacer(Modifier.height(8.dp))
 
+        val sortedRegions = if (suggestedId != null) {
+            val suggested = regions.filter { it.id == suggestedId }
+            val rest = regions.filter { it.id != suggestedId }
+            suggested + rest
+        } else regions
+
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(regions, key = { it.id }) { region ->
+            items(sortedRegions, key = { it.id }) { region ->
                 RegionRow(
                     region = region,
                     isDownloading = downloadState is DownloadState.Downloading,
+                    isSuggested = region.id == suggestedId,
+                    hasUrl = region.graphUrl.isNotBlank(),
+                    isInstalled = installed && region.graphUrl.isNotBlank(),
                     onDownload = { viewModel.download(region) },
                 )
             }
@@ -177,29 +190,42 @@ private fun StatusCard(message: String, color: Color) {
 private fun RegionRow(
     region: Region,
     isDownloading: Boolean,
+    isSuggested: Boolean = false,
+    hasUrl: Boolean = false,
+    isInstalled: Boolean = false,
     onDownload: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(DarkSurface)
+            .background(if (isSuggested) GoldAccent.copy(alpha = 0.08f) else DarkSurface)
+            .then(if (isSuggested) Modifier.border(1.dp, GoldAccent.copy(alpha = 0.3f), RoundedCornerShape(10.dp)) else Modifier)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column {
-            Text(text = region.name, color = OnSurface, fontSize = 14.sp)
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(text = region.name, color = OnSurface, fontSize = 14.sp, fontWeight = if (isSuggested) FontWeight.SemiBold else FontWeight.Normal)
+                if (isSuggested) {
+                    Text(text = "Suggested", color = GoldAccent, fontSize = 11.sp)
+                }
+            }
             Text(
                 text = "~${region.totalSizeMb} MB (routing ${region.graphSizeMb} + tiles ${region.tilesSizeMb})",
                 color = OnSurface.copy(alpha = 0.4f),
                 fontSize = 12.sp,
             )
         }
-        if (!isDownloading) {
+        if (isInstalled) {
+            Text("Installed", color = Color(0xFF10B981), fontSize = 12.sp)
+        } else if (!isDownloading && hasUrl) {
             TextButton(onClick = onDownload) {
                 Text("Download", color = GoldAccent, fontSize = 13.sp)
             }
+        } else if (!isDownloading && !hasUrl) {
+            Text("Coming soon", color = OnSurfaceDim.copy(alpha = 0.4f), fontSize = 12.sp)
         }
     }
 }

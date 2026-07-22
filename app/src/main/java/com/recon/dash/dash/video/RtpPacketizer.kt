@@ -1,5 +1,6 @@
 package com.recon.dash.dash.video
 
+import com.recon.dash.util.DebugLog
 import java.util.Random
 
 /**
@@ -29,7 +30,12 @@ class RtpPacketizer(private val onPacket: (ByteArray) -> Unit) {
      * @param endOfAU     true if this is the last NAL in the access unit (triggers marker bit)
      * @param wallClockMs monotonic wall clock in milliseconds
      */
+    private var packetizeCount = 0
+
     fun packetize(nal: ByteArray, endOfAU: Boolean, wallClockMs: Long) {
+        if (++packetizeCount <= 3 || packetizeCount % 40 == 0) {
+            DebugLog.i("RtpPacketizer") { "packetize #$packetizeCount nal=${nal.size}B" }
+        }
         val ts = (tsBase + wallClockMs * 90L) and 0xFFFFFFFFL
         if (nal.size <= MAX_PAYLOAD) {
             emit(nal, marker = endOfAU, ts = ts)

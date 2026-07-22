@@ -24,6 +24,7 @@ class RideRecorder @Inject constructor(
     companion object {
         private const val TAG = "RideRecorder"
         private const val MIN_RECORD_DISTANCE_M = 5.0
+        private const val MIN_RIDE_DISTANCE_M = 100.0
     }
 
     private val _isRecording = MutableStateFlow(false)
@@ -40,28 +41,28 @@ class RideRecorder @Inject constructor(
     private var lastLocation: Location? = null
     private val trackPoints = ArrayList<GeoPoint>()
 
-    suspend fun start(destination: String, startLat: Double, startLng: Double): Long {
-        if (_isRecording.value) return currentRecordId
+    /**
+     * Begin tracking a ride in memory. The record is NOT written to the database
+     * here — it's only persisted in [stop] and only if the ride covered at least
+     * [MIN_RIDE_DISTANCE_M]. This prevents zero-distance / accidental rides (e.g.
+     * starting nav without moving, or without the dash connected) from cluttering
+     * ride history.
+     */
+    fun start(destination: String, startLat: Double, startLng: Double) {
+        if (_isRecording.value) return
 
         startTime = System.currentTimeMillis()
         destinationName = destination
         totalDistance = 0.0
         maxSpeed = 0f
         lastLocation = null
+        currentRecordId = 0
         trackPoints.clear()
         trackPoints.add(GeoPoint(startLat, startLng))
 
-        val record = RideRecord(
-            startTime = startTime,
-            destinationName = destination,
-            startLat = startLat,
-            startLng = startLng,
-        )
-        currentRecordId = dao.insert(record)
         _isRecording.value = true
         _stats.value = RideStats()
-        DebugLog.i(TAG) { "Recording started — id=$currentRecordId dest=$destination" }
-        return currentRecordId
+        DebugLog.i(TAG) { "Recording started — dest=$destination" }
     }
 
     fun addPoint(location: Location) {
@@ -98,6 +99,13 @@ class RideRecorder @Inject constructor(
         if (!_isRecording.value) return null
         _isRecording.value = false
 
+        // Discard trivial rides — don't pollute history with zero/short tracks.
+        if (totalDistance < MIN_RIDE_DISTANCE_M) {
+            DebugLog.i(TAG) { "Ride discarded — only ${totalDistance.toInt()}m (< ${MIN_RIDE_DISTANCE_M.toInt()}m)" }
+            trackPoints.clear()
+            return null
+        }
+
         val endTime = System.currentTimeMillis()
         val duration = (endTime - startTime) / 1000L
         val avgSpeed = if (duration > 0) (totalDistance / 1000.0) / (duration / 3600.0) else 0.0
@@ -105,7 +113,6 @@ class RideRecorder @Inject constructor(
         val encodedTrack = PolylineCodec.encode(trackPoints)
 
         val record = RideRecord(
-            id = currentRecordId,
             startTime = startTime,
             endTime = endTime,
             distanceMeters = totalDistance,
@@ -119,18 +126,17 @@ class RideRecorder @Inject constructor(
             endLng = endPoint?.lng ?: 0.0,
             encodedPolyline = encodedTrack,
         )
-        dao.update(record)
+        currentRecordId = dao.insert(record)
 
-        DebugLog.i(TAG) { "Recording stopped — ${totalDistance.toInt()}m, ${trackPoints.size} points, ${duration}s" }
+        DebugLog.i(TAG) { "Ride saved — ${totalDistance.toInt()}m, ${trackPoints.size} points, ${duration}s" }
         trackPoints.clear()
-        return record
+        return record.copy(id = currentRecordId)
     }
 
-    suspend fun discard() {
+    fun discard() {
         if (!_isRecording.value) return
         _isRecording.value = false
-        dao.deleteById(currentRecordId)
         trackPoints.clear()
-        DebugLog.i(TAG) { "Recording discarded — id=$currentRecordId" }
+        DebugLog.i(TAG) { "Recording discarded (in-memory, nothing persisted)" }
     }
 }

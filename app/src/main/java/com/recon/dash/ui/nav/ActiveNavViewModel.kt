@@ -8,6 +8,7 @@ import android.os.Looper
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.recon.dash.dash.DashConfig
 import com.recon.dash.dash.NavSessionManager
 import com.recon.dash.dash.nav.*
 import com.recon.dash.data.RideRecorder
@@ -28,6 +29,7 @@ data class NavDisplayState(
     val destinationName: String = "",
     val arrived: Boolean = false,
     val offRoute: Boolean = false,
+    val speedAlertActive: Boolean = false,
 )
 
 @HiltViewModel
@@ -36,6 +38,7 @@ class ActiveNavViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val navSessionManager: NavSessionManager,
     private val rideRecorder: RideRecorder,
+    private val dashConfig: DashConfig,
 ) : ViewModel() {
 
     companion object {
@@ -47,6 +50,17 @@ class ActiveNavViewModel @Inject constructor(
 
     private val _dashStatus = MutableStateFlow("Disconnected")
     val dashStatus = _dashStatus.asStateFlow()
+
+    private val _routeGeometry = MutableStateFlow<List<GeoPoint>>(emptyList())
+    val routeGeometry = _routeGeometry.asStateFlow()
+
+    private val _riderPosition = MutableStateFlow<GeoPoint?>(null)
+    val riderPosition = _riderPosition.asStateFlow()
+
+    val destination = GeoPoint(
+        savedStateHandle.get<String>("destLat")?.toDoubleOrNull() ?: 0.0,
+        savedStateHandle.get<String>("destLng")?.toDoubleOrNull() ?: 0.0,
+    )
 
     private val router = Router(context)
     private var route: Route? = null
@@ -60,7 +74,20 @@ class ActiveNavViewModel @Inject constructor(
 
     init {
         _navState.value = NavDisplayState(destinationName = destName)
+        observeDashStatus()
         startNavigation()
+    }
+
+    private fun observeDashStatus() {
+        viewModelScope.launch {
+            com.recon.dash.dash.DashConnectionState.state.collect { state ->
+                _dashStatus.value = when (state) {
+                    com.recon.dash.dash.DashState.STREAMING,
+                    com.recon.dash.dash.DashState.READY -> "Streaming"
+                    else -> "Disconnected"
+                }
+            }
+        }
     }
 
     private fun startNavigation() {
@@ -74,7 +101,11 @@ class ActiveNavViewModel @Inject constructor(
             val origin = getLastKnownLocation()
             if (origin != null) {
                 computeRoute(origin)
-                rideRecorder.start(destName, origin.lat, origin.lng)
+                // Only record a ride when the dash is connected — nav from the phone
+                // alone (previewing a route) shouldn't clutter ride history.
+                if (com.recon.dash.dash.DashConnectionState.isConnected) {
+                    rideRecorder.start(destName, origin.lat, origin.lng)
+                }
             } else {
                 DebugLog.w(TAG) { "No GPS fix yet — will start recording on first fix" }
             }
@@ -85,16 +116,36 @@ class ActiveNavViewModel @Inject constructor(
 
     private suspend fun computeRoute(from: GeoPoint) {
         val to = GeoPoint(destLat, destLng)
-        when (val result = router.route(from, to)) {
+        var result = router.route(from, to)
+        if (result is RouterResult.Failure) {
+            DebugLog.w(TAG) { "Offline route failed, trying OSRM online: ${(result as RouterResult.Failure).error}" }
+            result = com.recon.dash.dash.nav.OsrmClient.route(from, to)
+        }
+        when (result) {
             is RouterResult.Success -> {
                 route = result.route
+                _routeGeometry.value = result.route.geometry
                 voiceManager = VoiceManager.get(context)
                 voiceManager?.resetTrip()
                 navSessionManager.startNavigation(result.route, destName)
-                DebugLog.i(TAG) { "Route computed — ${result.route.totalMeters.toInt()}m, ${result.route.maneuvers.size} maneuvers" }
+                val r = result.route
+                val firstManeuver = r.maneuvers.firstOrNull { it.type != com.recon.dash.dash.nav.ManeuverType.DEPART }
+                _navState.value = NavDisplayState(
+                    etaText = formatEta(r.totalSeconds),
+                    remainingText = formatDistance(r.totalMeters),
+                    distToTurnText = firstManeuver?.let { formatDistance(it.cumulativeMeters) } ?: "",
+                    nextInstruction = firstManeuver?.instruction,
+                    destinationName = destName,
+                )
+                DebugLog.i(TAG) { "Route computed — ${r.totalMeters.toInt()}m, ${r.maneuvers.size} maneuvers" }
             }
             is RouterResult.Failure -> {
-                DebugLog.w(TAG) { "Route failed: ${result.error}" }
+                _navState.value = NavDisplayState(
+                    etaText = "--",
+                    remainingText = "Route unavailable",
+                    destinationName = destName,
+                )
+                DebugLog.w(TAG) { "Route failed (offline + online): ${result.error}" }
             }
         }
     }
@@ -105,26 +156,40 @@ class ActiveNavViewModel @Inject constructor(
         locationListener = listener
 
         try {
+            // Seed the map center immediately with the last-known fix so the dash shows the
+            // map right away — GPS_PROVIDER can take a while (or never fix indoors), which
+            // otherwise left the render loop with pos=null and no map.
             @Suppress("MissingPermission")
-            lm.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER,
-                1000L,
-                5f,
-                listener,
-                Looper.getMainLooper(),
-            )
+            val seed = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                ?: lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
+            if (seed != null) {
+                DebugLog.i(TAG) { "Seeding position from last-known fix" }
+                onLocationUpdate(seed)
+            }
+            // Register BOTH providers: NETWORK works indoors / before a GPS lock, GPS is
+            // accurate outdoors. Whichever delivers first drives the map.
+            @Suppress("MissingPermission")
+            for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+                if (lm.isProviderEnabled(provider)) {
+                    lm.requestLocationUpdates(provider, 1000L, 0f, listener, Looper.getMainLooper())
+                    DebugLog.i(TAG) { "Requested updates from $provider" }
+                }
+            }
         } catch (e: SecurityException) {
             DebugLog.w(TAG) { "Location permission not granted: ${e.message}" }
         }
     }
 
     private fun onLocationUpdate(location: Location) {
-        if (!rideRecorder.isRecording.value && route != null) {
-            viewModelScope.launch {
-                rideRecorder.start(destName, location.latitude, location.longitude)
-            }
+        if (!rideRecorder.isRecording.value && route != null &&
+            com.recon.dash.dash.DashConnectionState.isConnected
+        ) {
+            rideRecorder.start(destName, location.latitude, location.longitude)
         }
         rideRecorder.addPoint(location)
+
+        _riderPosition.value = GeoPoint(location.latitude, location.longitude)
 
         val currentRoute = route ?: return
         val pos = GeoPoint(location.latitude, location.longitude)
@@ -134,6 +199,11 @@ class ActiveNavViewModel @Inject constructor(
 
         val progress = NavEngine.progress(currentRoute, pos, speed)
 
+        // Speed alert check
+        val threshold = dashConfig.speedAlertKmh
+        val speedKmh = speed * 3.6f // m/s to km/h
+        val alertActive = threshold > 0 && speedKmh > threshold
+
         _navState.value = NavDisplayState(
             etaText = formatEta(progress.etaSeconds),
             remainingText = formatDistance(progress.remainingMeters),
@@ -142,6 +212,7 @@ class ActiveNavViewModel @Inject constructor(
             destinationName = destName,
             arrived = progress.arrived,
             offRoute = progress.offRoute,
+            speedAlertActive = alertActive,
         )
 
         voiceManager?.maybeAnnounce(

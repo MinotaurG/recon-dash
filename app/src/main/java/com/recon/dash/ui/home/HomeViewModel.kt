@@ -2,6 +2,7 @@ package com.recon.dash.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.recon.dash.dash.DashConfig
 import com.recon.dash.dash.DashState
 import com.recon.dash.dash.NavSessionManager
 import com.recon.dash.data.FavoritePlace
@@ -21,6 +22,7 @@ import javax.inject.Inject
 class HomeViewModel @Inject constructor(
     private val favoriteRepo: FavoriteRepository,
     private val navSessionManager: NavSessionManager,
+    private val config: DashConfig,
 ) : ViewModel() {
 
     val favorites = favoriteRepo.observeAll()
@@ -34,7 +36,18 @@ class HomeViewModel @Inject constructor(
 
     val isNavigating = navSessionManager.isNavigating
 
+    private val _musicAppPackage = MutableStateFlow(config.musicApp)
+    val musicAppPackage = _musicAppPackage.asStateFlow()
+
+    private val _visibleCustomSlots = MutableStateFlow(config.visibleCustomSlots)
+    val visibleCustomSlots = _visibleCustomSlots.asStateFlow()
+
     fun setDashConnected(connected: Boolean) {
         _dashConnected.value = connected
+    }
+
+    fun refreshConfig() {
+        _musicAppPackage.value = config.musicApp
+        _visibleCustomSlots.value = config.visibleCustomSlots
     }
 }

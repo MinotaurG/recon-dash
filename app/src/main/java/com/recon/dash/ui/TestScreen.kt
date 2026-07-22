@@ -28,7 +28,10 @@ import com.recon.dash.ui.theme.GoldAccent
 import com.recon.dash.ui.theme.OnSurface
 
 @Composable
-fun TestScreen(viewModel: DashViewModel = hiltViewModel()) {
+fun TestScreen(
+    onTelemetryLabTap: () -> Unit = {},
+    viewModel: DashViewModel = hiltViewModel(),
+) {
     val state by viewModel.connectionState.collectAsStateWithLifecycle()
     val mode by viewModel.mode.collectAsStateWithLifecycle()
     val log by viewModel.protocolLog.collectAsStateWithLifecycle()
@@ -93,7 +96,18 @@ fun TestScreen(viewModel: DashViewModel = hiltViewModel()) {
             )
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = onTelemetryLabTap,
+            modifier = Modifier.fillMaxWidth().height(44.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldAccent),
+        ) {
+            Text("Telemetry Lab", fontSize = 14.sp)
+        }
+
+        Spacer(Modifier.height(20.dp))
 
         Text(
             text = "Protocol Log",

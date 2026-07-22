@@ -40,6 +40,7 @@ class DashSession(private val scope: CoroutineScope, private val mode: DashMode 
     var onButton: ((Byte) -> Unit)? = null
     var onError:  ((String) -> Unit)? = null
     var onProtocolEvent: ((String) -> Unit)? = null
+    var onTelemetry: ((TelemetryPacket) -> Unit)? = null
 
     @Volatile var destinationName: String = "OpenDash"
 
@@ -132,22 +133,33 @@ class DashSession(private val scope: CoroutineScope, private val mode: DashMode 
     }
 
     fun updateRouteCard(name: String) {
+        val wasNavigating = navChromeEnabled
         destinationName = name.ifBlank { "OpenDash" }
         navActive = false
         navChromeEnabled = destinationName != "OpenDash"
-        if (navChromeEnabled && (_state.value == DashState.READY || _state.value == DashState.STREAMING)) {
-            scope.launch(Dispatchers.IO) {
+        val live = _state.value == DashState.READY || _state.value == DashState.STREAMING
+        if (!live) return
+
+        when {
+            // Navigation STARTING (idle -> nav): open the projection window and enter nav mode.
+            // Because we no longer project when idle (dash stays on its native RPM screen),
+            // nav must open projection itself — otherwise only turn-by-turn is sent and the
+            // map never appears. This runs the proven nav-entry sequence.
+            navChromeEnabled && !wasNavigating -> scope.launch(Dispatchers.IO) {
+                socket?.let { s ->
+                    if (mode == DashMode.DIGITAL) enterNavMode(s) else enterAnalogueNavMode(s)
+                }
+            }
+            // Already navigating, destination refresh: just push an updated route card.
+            navChromeEnabled -> scope.launch(Dispatchers.IO) {
                 socket?.send(liveRouteCard())
             }
-        } else if (mode == DashMode.DIGITAL && (_state.value == DashState.READY || _state.value == DashState.STREAMING)) {
-            scope.launch(Dispatchers.IO) {
+            // Navigation STOPPING (nav -> idle): close projection so the dash returns to its
+            // native RPM screen instead of a frozen map. Only in digital mode.
+            mode == DashMode.DIGITAL && wasNavigating -> scope.launch(Dispatchers.IO) {
                 socket?.send(DashCommands.projectionStop())
                 delay(40)
                 socket?.send(DashCommands.projectionOff())
-                delay(40)
-                socket?.send(DashCommands.projectionFrame())
-                delay(40)
-                socket?.send(DashCommands.projectionOn())
             }
         }
     }
@@ -214,7 +226,12 @@ class DashSession(private val scope: CoroutineScope, private val mode: DashMode 
                 mode == DashMode.ANALOGUE && navChromeEnabled -> enterAnalogueNavMode(sock)
                 mode == DashMode.ANALOGUE -> {} // no projection, no nav chrome — heartbeat keeps session alive
                 navChromeEnabled -> enterNavMode(sock)
-                else -> enterIdleProjectionMode(sock)
+                // Digital, but no active navigation: do NOT open the idle projection window.
+                // Projecting when idle takes over the dash and hides the native RPM meter,
+                // and the idle wallpaper feature isn't wanted for now. Leave the dash on its
+                // default (RPM) screen; the heartbeat keeps the session alive, and enterNavMode
+                // opens projection only once navigation actually starts.
+                else -> {}
             }
             _state.value = DashState.READY
             DebugLog.i(TAG) { "READY ✓" }
@@ -354,6 +371,15 @@ class DashSession(private val scope: CoroutineScope, private val mode: DashMode 
                 DebugLog.i(TAG) { "DASH TELEMETRY 0F sub=0x%02X enc(%dB)=%s  dec=%s".format(
                     tlv.sub, tlv.value.size, tlv.value.toHexFull(),
                     plain?.toHexFull() ?: "<key=${key != null}; decrypt failed>") }
+                val pkt0F = TelemetryPacket(
+                    timestampMs = System.currentTimeMillis(),
+                    type = 0x0F,
+                    sub = tlv.sub,
+                    raw = tlv.value,
+                    decrypted = plain,
+                )
+                onTelemetry?.invoke(pkt0F)
+                TelemetryBus.emit(pkt0F)
                 continue
             }
             // ── 0C xx: dash → app telemetry (trip/odo/fuel/temp — P1b) ──
@@ -361,6 +387,15 @@ class DashSession(private val scope: CoroutineScope, private val mode: DashMode 
                 val msg = "TELEMETRY 0C sub=0x%02X (%dB)".format(tlv.sub, tlv.value.size)
                 DebugLog.i(TAG) { "$msg val=${tlv.value.toHexFull()}" }
                 onProtocolEvent?.invoke(msg)
+                val pkt0C = TelemetryPacket(
+                    timestampMs = System.currentTimeMillis(),
+                    type = 0x0C,
+                    sub = tlv.sub,
+                    raw = tlv.value,
+                    decrypted = tlv.value,
+                )
+                onTelemetry?.invoke(pkt0C)
+                TelemetryBus.emit(pkt0C)
                 continue
             }
             // Log every OTHER incoming event (e.g. joystick in nav view, or the dash's

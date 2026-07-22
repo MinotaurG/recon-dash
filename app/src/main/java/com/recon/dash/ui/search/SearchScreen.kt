@@ -9,6 +9,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Place
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,11 +32,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.recon.dash.data.FavoriteSlot
 import com.recon.dash.search.SearchResult
-import com.recon.dash.ui.theme.DarkBackground
-import com.recon.dash.ui.theme.DarkSurface
-import com.recon.dash.ui.theme.GoldAccent
-import com.recon.dash.ui.theme.OnSurface
-import com.recon.dash.ui.theme.OnSurfaceDim
+import com.recon.dash.ui.theme.*
 
 @Composable
 fun SearchScreen(
@@ -41,6 +44,7 @@ fun SearchScreen(
     val results by viewModel.results.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    val recents by viewModel.recents.collectAsStateWithLifecycle()
     val saveSlot = viewModel.saveToSlot
 
     val focusRequester = remember { FocusRequester() }
@@ -52,35 +56,27 @@ fun SearchScreen(
             .fillMaxSize()
             .background(DarkBackground)
             .statusBarsPadding()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp),
     ) {
         Spacer(Modifier.height(16.dp))
 
         if (saveSlot != null) {
-            Spacer(Modifier.height(4.dp))
             Text(
                 text = "Saving to: ${slotLabel(saveSlot)}",
                 color = GoldAccent,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 20.dp),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
         }
 
+        // Search field with close button
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = "Back",
-                color = GoldAccent,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(end = 16.dp, top = 8.dp, bottom = 8.dp),
-            )
             SearchField(
                 value = query,
                 onValueChange = { viewModel.updateQuery(it) },
@@ -88,6 +84,17 @@ fun SearchScreen(
                     .weight(1f)
                     .focusRequester(focusRequester),
             )
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "Close",
+                    tint = OnSurfaceDim,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -95,18 +102,41 @@ fun SearchScreen(
         if (error != null) {
             Text(
                 text = error ?: "",
-                color = OnSurface.copy(alpha = 0.5f),
+                color = OnSurfaceDim,
                 fontSize = 13.sp,
-                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // Empty query → show recent searches. Otherwise show live results.
+        val showRecents = query.isBlank() && recents.isNotEmpty()
+
+        if (results.isEmpty() && query.isNotBlank() && !isLoading) {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "No results found", color = OnSurfaceDim, fontSize = 14.sp)
+            }
+        }
+
+        if (showRecents) {
+            Text(
+                text = "Recent",
+                color = OnSurfaceDim,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(bottom = 4.dp),
             )
         }
 
+        val displayList = if (showRecents) recents else results
+
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            itemsIndexed(results, key = { _, it -> "${it.location.lat},${it.location.lng}" }) { index, result ->
+            itemsIndexed(displayList, key = { index, it -> "$index-${it.location.lat},${it.location.lng}" }) { index, result ->
                 AnimatedVisibility(
                     visible = true,
                     enter = fadeIn() + slideInVertically(
@@ -117,11 +147,13 @@ fun SearchScreen(
                     ResultRow(
                         result = result,
                         saveMode = saveSlot != null,
+                        recent = showRecents,
                         onClick = {
                             if (saveSlot != null) {
                                 viewModel.saveAsFavorite(result, saveSlot, slotLabel(saveSlot))
                                 onBack()
                             } else {
+                                viewModel.recordSelection(result)
                                 onResultTap(result)
                             }
                         },
@@ -138,45 +170,61 @@ private fun SearchField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
+    Row(
         modifier = modifier
-            .height(44.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .height(48.dp)
+            .clip(RoundedCornerShape(14.dp))
             .background(DarkSurface)
             .padding(horizontal = 14.dp),
-        contentAlignment = Alignment.CenterStart,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (value.isEmpty()) {
-            Text(
-                text = "Search places",
-                color = OnSurface.copy(alpha = 0.35f),
-                fontSize = 15.sp,
+        Icon(
+            imageVector = Icons.Outlined.Search,
+            contentDescription = null,
+            tint = OnSurfaceDim,
+            modifier = Modifier.size(18.dp),
+        )
+        Box(modifier = Modifier.weight(1f)) {
+            if (value.isEmpty()) {
+                Text(
+                    text = "Search places",
+                    color = OnSurface.copy(alpha = 0.35f),
+                    fontSize = 15.sp,
+                )
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = TextStyle(
+                    color = OnSurface,
+                    fontSize = 15.sp,
+                ),
+                cursorBrush = SolidColor(GoldAccent),
+                modifier = Modifier.fillMaxWidth(),
             )
         }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            textStyle = TextStyle(
-                color = OnSurface,
-                fontSize = 15.sp,
-            ),
-            cursorBrush = SolidColor(GoldAccent),
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 
 @Composable
-private fun ResultRow(result: SearchResult, saveMode: Boolean, onClick: () -> Unit) {
+private fun ResultRow(result: SearchResult, saveMode: Boolean, recent: Boolean = false, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(vertical = 14.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Icon(
+            imageVector = if (recent) Icons.Rounded.History else Icons.Rounded.Place,
+            contentDescription = null,
+            tint = if (recent) OnSurfaceDim else GoldAccent,
+            modifier = Modifier.size(20.dp),
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = result.name,
@@ -207,8 +255,8 @@ private fun ResultRow(result: SearchResult, saveMode: Boolean, onClick: () -> Un
 private fun slotLabel(slot: FavoriteSlot): String = when (slot) {
     FavoriteSlot.HOME -> "Home"
     FavoriteSlot.OFFICE -> "Office"
-    FavoriteSlot.CUSTOM_1 -> "Custom 1"
-    FavoriteSlot.CUSTOM_2 -> "Custom 2"
-    FavoriteSlot.CUSTOM_3 -> "Custom 3"
-    FavoriteSlot.CUSTOM_4 -> "Custom 4"
+    FavoriteSlot.CUSTOM_1 -> "Place 1"
+    FavoriteSlot.CUSTOM_2 -> "Place 2"
+    FavoriteSlot.CUSTOM_3 -> "Place 3"
+    FavoriteSlot.CUSTOM_4 -> "Place 4"
 }

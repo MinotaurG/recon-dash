@@ -4,9 +4,13 @@
 /.idea/
 .DS_Store
 /build
+# Module build dirs (app/build, valhalla/build) — generated, never commit.
+build/
 /captures
 .externalNativeBuild
 .cxx
+# Cloudflare Wrangler local state
+.wrangler/
 local.properties
 key.properties
 
@@ -22,3 +26,9 @@ key.properties
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Personal task handout, not part of the app
+CPP_NATIVE_HANDOUT.md
+
+# Prebuilt Valhalla native libs — backed up to R2 (see valhalla/README.md), not in git
+valhalla/src/main/jniLibs/**/*.so

@@ -81,11 +81,17 @@ class DashEncoder(private val onEncodedData: (ByteArray, Boolean) -> Unit) {
     }
 
     /** Draw one frame into the encoder via hardware canvas. */
+    private var noSurfaceLogged = false
+
     fun renderFrame(draw: (Canvas) -> Unit) {
-        val surface = inputSurface ?: return
+        val surface = inputSurface ?: run {
+            if (!noSurfaceLogged) { noSurfaceLogged = true; DebugLog.w(TAG) { "renderFrame: inputSurface is NULL" } }
+            return
+        }
         val canvas = try {
             surface.lockHardwareCanvas()
         } catch (e: Exception) {
+            DebugLog.w(TAG) { "renderFrame: lockHardwareCanvas failed: ${e.message}" }
             return
         }
         try {
@@ -95,9 +101,11 @@ class DashEncoder(private val onEncodedData: (ByteArray, Boolean) -> Unit) {
         }
     }
 
+    private var drainedBuffers = 0
+
     /** Pull all available encoded buffers; call after every [renderFrame]. */
     fun drain() {
-        val codec = codec ?: return
+        val codec = codec ?: run { DebugLog.w(TAG) { "drain: codec is NULL" }; return }
         val info = MediaCodec.BufferInfo()
         while (true) {
             val idx = codec.dequeueOutputBuffer(info, DRAIN_TIMEOUT_US)
@@ -114,6 +122,9 @@ class DashEncoder(private val onEncodedData: (ByteArray, Boolean) -> Unit) {
                     // otherwise the dash can't initialise its decoder and times out.
                     if (info.size > 0) {
                         val data = ByteArray(info.size).also { buf.get(it) }
+                        if (++drainedBuffers <= 3 || drainedBuffers % 40 == 0) {
+                            DebugLog.i(TAG) { "drain: encoded buffer #$drainedBuffers (${info.size}B key=$isKey)" }
+                        }
                         onEncodedData(data, isKey)
                     }
                     codec.releaseOutputBuffer(idx, false)

@@ -1,7 +1,9 @@
 package com.recon.dash.ui.nav
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -12,11 +14,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.recon.dash.ui.map.MapViewComposable
 import com.recon.dash.ui.theme.DarkBackground
 import com.recon.dash.ui.theme.DarkSurface
 import com.recon.dash.ui.theme.GoldAccent
@@ -29,78 +31,110 @@ fun ActiveNavScreen(
 ) {
     val navState by viewModel.navState.collectAsStateWithLifecycle()
     val dashState by viewModel.dashStatus.collectAsStateWithLifecycle()
+    val routeGeometry by viewModel.routeGeometry.collectAsStateWithLifecycle()
+    val riderPosition by viewModel.riderPosition.collectAsStateWithLifecycle()
 
-    Column(
+    val alertBorderColor by animateColorAsState(
+        targetValue = if (navState.speedAlertActive) Color(0xFFFF453A) else Color.Transparent,
+        animationSpec = if (navState.speedAlertActive) {
+            repeatable(Int.MAX_VALUE, tween(500), RepeatMode.Reverse)
+        } else tween(300),
+        label = "speedAlert",
+    )
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(DarkBackground)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .border(
+                width = if (navState.speedAlertActive) 3.dp else 0.dp,
+                color = alertBorderColor,
+            ),
     ) {
-        Spacer(Modifier.height(32.dp))
-
-        DashStatusBadge(dashState)
-
-        Spacer(Modifier.height(40.dp))
-
-        // Main ETA / distance glance
-        Text(
-            text = navState.etaText,
-            color = Color(0xFF7ED957),
-            fontSize = 48.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = navState.remainingText,
-            color = OnSurface.copy(alpha = 0.6f),
-            fontSize = 16.sp,
+        // Map fills the screen with the route drawn
+        MapViewComposable(
+            modifier = Modifier.fillMaxSize(),
+            centerLat = viewModel.destination.lat,
+            centerLng = viewModel.destination.lng,
+            zoom = 12.0,
+            routeGeometry = routeGeometry,
+            destination = viewModel.destination,
+            riderLocation = riderPosition,
         )
 
-        Spacer(Modifier.height(48.dp))
+        // Top overlay: maneuver / ETA
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(16.dp),
+        ) {
+            DashStatusBadge(dashState)
+            Spacer(Modifier.height(8.dp))
 
-        // Next maneuver card
-        if (navState.nextInstruction != null) {
+            if (navState.speedAlertActive) {
+                Text("SLOW DOWN", color = Color(0xFFFF453A), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+            }
+
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkSurface.copy(alpha = 0.95f)),
+                shape = RoundedCornerShape(16.dp),
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Text(
-                        text = navState.distToTurnText,
-                        color = GoldAccent,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = navState.nextInstruction ?: "",
-                        color = OnSurface,
-                        fontSize = 15.sp,
-                    )
+                Row(
+                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        if (navState.nextInstruction != null) {
+                            Text(
+                                text = navState.distToTurnText,
+                                color = GoldAccent,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = navState.nextInstruction ?: "",
+                                color = OnSurface,
+                                fontSize = 14.sp,
+                            )
+                        } else {
+                            Text(
+                                text = navState.destinationName,
+                                color = OnSurface,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = navState.etaText,
+                            color = Color(0xFF7ED957),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            text = navState.remainingText,
+                            color = OnSurface.copy(alpha = 0.6f),
+                            fontSize = 13.sp,
+                        )
+                    }
                 }
             }
         }
 
-        Spacer(Modifier.weight(1f))
-
-        // Destination
-        Text(
-            text = navState.destinationName,
-            color = OnSurface.copy(alpha = 0.4f),
-            fontSize = 13.sp,
-        )
-
-        Spacer(Modifier.height(16.dp))
-
+        // Bottom: end navigation
         Button(
             onClick = onStop,
             modifier = Modifier
+                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(20.dp)
                 .height(52.dp),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
@@ -108,26 +142,19 @@ fun ActiveNavScreen(
                 contentColor = Color(0xFFCC6666),
             ),
         ) {
-            Text(
-                text = "End Navigation",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Text("End Navigation", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         }
-
-        Spacer(Modifier.height(24.dp))
     }
 }
 
 @Composable
 private fun DashStatusBadge(status: String) {
     val isConnected = status == "Streaming"
-    val color = if (isConnected) Color(0xFF10B981) else OnSurface.copy(alpha = 0.3f)
-
+    val color = if (isConnected) Color(0xFF10B981) else OnSurface.copy(alpha = 0.4f)
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(color.copy(alpha = 0.12f))
+            .background(DarkSurface.copy(alpha = 0.9f))
             .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Text(

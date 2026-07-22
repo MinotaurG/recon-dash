@@ -12,14 +12,16 @@ class Converters {
 }
 
 @Database(
-    entities = [FavoritePlace::class, RideRecord::class],
-    version = 1,
+    entities = [FavoritePlace::class, RideRecord::class, FuelFillup::class, ServiceItem::class],
+    version = 3,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun favoritePlaceDao(): FavoritePlaceDao
     abstract fun rideRecordDao(): RideRecordDao
+    abstract fun fuelFillupDao(): FuelFillupDao
+    abstract fun serviceItemDao(): ServiceItemDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -30,7 +32,8 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "recon_dash.db",
-                ).build().also { instance = it }
+                ).fallbackToDestructiveMigration()
+                .build().also { instance = it }
             }
     }
 }

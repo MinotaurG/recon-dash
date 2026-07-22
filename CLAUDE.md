@@ -28,7 +28,7 @@ Recon Dash — motorcycle navigation companion for Royal Enfield Tripper Dash (a
 - **DI:** Hilt
 - **Maps (phone):** MapLibre GL (vector tiles, offline via PMTiles) — NOT YET IMPLEMENTED
 - **Maps (dash stream):** Custom Canvas renderer → H.264 (in `dash/map/`)
-- **Routing:** GraphHopper on-device (planned) / OSRM fallback (in `dash/nav/Router.kt`)
+- **Routing:** Valhalla on-device (via `:valhalla` module, JNI) / OSRM online fallback (in `dash/nav/Router.kt`)
 - **Search:** Photon API autocomplete — NOT YET IMPLEMENTED
 - **DB:** Room
 - **Dash protocol:** K1G packets over UDP, WiFi network binding, H.264/RTP streaming
@@ -48,7 +48,7 @@ com.recon.dash/
 │   └── DashKeepAliveService  Foreground service (screen-off streaming)
 ├── ui/                Compose UI (CarPlay-style, single-screen nav) — TO BUILD
 ├── map/               MapLibre vector tiles integration — TO BUILD
-├── routing/           On-device GraphHopper routing — TO BUILD
+├── routing/           On-device Valhalla routing (see :valhalla module)
 ├── search/            Photon autocomplete — TO BUILD
 ├── data/              Room DB, wallpaper models — TO BUILD
 └── util/              DebugLog
