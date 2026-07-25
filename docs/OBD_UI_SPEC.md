@@ -17,10 +17,24 @@ NOT cover the OBD transport (see the `obd/` module plan) — only what we render
 | Motion | smooth (bars, sweeps, glitch) | **numeric + discrete/stepped only** | smooth |
 | Role | show-off / sport | glanceable while riding | full cluster |
 
-**Dash canvas (key):** when navigation opens, the RE native RPM arc **turns off**, freeing the
-**full circle above the golden bar**. The golden bar (RE's own nav widget) stays. So our dash
-area = the large region from the top of the circle down to the golden bar. A **half-circle /
-full-round gauge** fits here — not just a thin crescent.
+**Dash canvas & view model (corrected from rider):**
+The **entire region above the golden bar is OUR canvas** — we replicate RE's native views there,
+and all of it is modifiable (turn-by-turn arrow, the RPM arc that turns off on nav, the map
+backdrop). The golden bar itself is RE-native (street/clock/temp/ODO/gear/speed/dest-dist/fuel).
+
+Two dash screens we drive:
+1. **Home / idle screen** — the only always-available screen. Today: wallpaper (or nothing).
+   THIS is where our idle view lives — rider chooses **wallpaper OR the Cyberpunk OBD cluster**.
+2. **Navigation menu** (joystick-accessed) — the **full H.264 map projection**.
+
+**Turn-by-turn is a PERSISTENT OVERLAY, not tied to one screen.** The rule:
+> Once navigation is started from the phone, the turn-by-turn (maneuver arrow + distance +
+> roundabout exit) must render on WHATEVER dash screen is showing — the idle/OBD cluster OR the
+> full-map view. It overlays on top, like RE's own TBT+golden-bar persist across their screens.
+> (Our current TBT is broken — fixing it is the nav priority.)
+
+So the OBD cluster and navigation are NOT mutually exclusive: the rider can be on the engine
+cluster and still get turn prompts overlaid.
 
 **4 fps rule:** anything that must animate smoothly (fill bars, sweeping needles, throttle blips)
 is PHONE/Pi only. The dash uses big numbers, discrete segment ticks, stepped shift lights, and
