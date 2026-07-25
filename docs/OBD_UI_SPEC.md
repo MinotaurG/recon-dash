@@ -1,0 +1,148 @@
+# Recon Dash — OBD / Engine Live Display Spec
+
+Design blueprint for the OBD-driven engine display, across phone and dash, with a **swappable
+theme system**. Cyberpunk is the default theme; F&F Sport, Tron, HUD Rings, KITT are future themes.
+
+This spec is the source of truth for the visual language and the data→element mapping. It does
+NOT cover the OBD transport (see the `obd/` module plan) — only what we render.
+
+---
+
+## 1. Canvases & constraints
+
+| | Phone | Dash (projected) | Raspberry Pi (future) |
+|---|---|---|---|
+| Frame rate | 60 fps | **4 fps hard cap** | unlimited |
+| Shape | rectangular | round 526×300, ~15px bezel clip | rectangular |
+| Motion | smooth (bars, sweeps, glitch) | **numeric + discrete/stepped only** | smooth |
+| Role | show-off / sport | glanceable while riding | full cluster |
+
+**Dash canvas (key):** when navigation opens, the RE native RPM arc **turns off**, freeing the
+**full circle above the golden bar**. The golden bar (RE's own nav widget) stays. So our dash
+area = the large region from the top of the circle down to the golden bar. A **half-circle /
+full-round gauge** fits here — not just a thin crescent.
+
+**4 fps rule:** anything that must animate smoothly (fill bars, sweeping needles, throttle blips)
+is PHONE/Pi only. The dash uses big numbers, discrete segment ticks, stepped shift lights, and
+state changes — all of which read fine at 4 fps.
+
+---
+
+## 2. Data → element mapping (all real PIDs)
+
+| Element | PID(s) | Formula / notes |
+|---|---|---|
+| RPM | `010C` | ((A*256)+B)/4 |
+| Speed | `010D` | A km/h |
+| Throttle % | `0111` | A*100/255 |
+| Engine load % | `0104` | A*100/255 |
+| Coolant °C | `0105` | A-40 |
+| Intake air °C | `010F` | A-40 |
+| Timing advance | `010E` | A/2-64 |
+| MAF | `0110` | ((A*256)+B)/100 → also feeds power/fuel estimate |
+| MAP | `010B` | A kPa |
+| Baro | `0133` | A kPa |
+| Battery / module V | `0142` | ((A*256)+B)/1000 |
+| Short/long fuel trim | `0106`/`0107` | (A-128)*100/128 |
+| O2 / wide-range lambda | `0114`/`0124`+ | AFR / lambda |
+| **Gear** (derived) | RPM ÷ speed | ratio bucketed into gears; not a PID |
+| **Power** (derived) | MAF + RPM | rough HP estimate for dyno/curve |
+
+---
+
+## 3. Theme system (architecture)
+
+A theme is a pure descriptor consumed by both renderers; adding one never touches the OBD data
+pipe or the `ObdSnapshot`.
+
+```
+interface EngineTheme {
+    val palette: Palette           // bg, primary, secondary, accent, warn, danger, text
+    val typography: Typeface specs // display/number/label fonts
+    val gauge: GaugeStyle          // ring vs bar vs arc; segment vs smooth
+    val effects: EffectRules       // glitch/scanline/bloom on/off + triggers
+    val boot: BootSequence?        // connect animation
+    fun tileFrame(): FrameStyle    // card/bracket/chamfer shape
+}
+```
+Renderers (phone Compose, dash MapRenderer-style canvas) read the theme; the data (`ObdSnapshot`
++ `NavProgress`) is theme-agnostic. Theme switch = swap the descriptor, re-render.
+
+Themes planned: **Cyberpunk (default)**, F&F Sport, Tron, HUD Rings, Analog Reborn, KITT.
+
+---
+
+## 4. THEME #1 — Cyberpunk (default)
+
+### Palette
+- bg `#0A0A0F` (near-black, faint dark-teal wash)
+- primary `#00E5FF` (cyan) · secondary `#FF2A6D` (hot magenta)
+- warn `#F9F002` (electric yellow) · danger `#FF2A6D` intensified
+- accent `#D4A853` (Recon gold, tertiary — keeps brand thread)
+- text `#EAF6FF`
+
+### Typography
+Condensed near-mono display (Rajdhani / Blender-Pro family). Big glowing numerals with a subtle
+chromatic-aberration edge (cyan/magenta 1px fringe). Labels UPPERCASE, wide letter-spacing.
+
+### Signature devices
+- **Angular bracket frames** — `⌜ ⌟` corner-cut boxes, 45° chamfers, thin neon stroke + inner glow. No rounded cards.
+- **Glitch on state change** — redline cross / warning fire → ~150ms RGB-split + scanline tear + flicker, then snap clean. (Phone: on any alert. Dash: ONLY on connect + alerts — never continuous while riding, for safety.)
+- **Scanlines + bloom** — faint horizontal scanline overlay; neon bloom on bright elements.
+- **Decrypt spin-up** — values scramble-in like a terminal decrypting, then resolve.
+- **Diegetic chrome** — corner frame ticks, `RECON//SYS` label, pulsing `◈ OBD LINK` dot.
+
+### Boot sequence (on OBD connect, ~2s)
+Breach-protocol style: scanlines sweep top→bottom; text scrambles in
+`ESTABLISHING LINK… ECU 7E8… DECRYPTING…`; gauges power up with a glitch; settle to
+`SYSTEMS ONLINE`. Phone full; dash a shorter stepped version.
+
+### Phone layout (60fps, full)
+```
+⌜═════════════ RECON//SYS ═══════════════ ◈ OBD LINK ⌝
+  ⌜RPM⌟                                  ⌜THR⌟
+  ▓▓▓▓        ╔══════════════╗            ░░
+  ▓▓▓▓        ║   4 2 5 0    ║            ▓▓      cyan RPM bar (fills up),
+  ▓▓▓▓        ║   ⟨ R P M ⟩  ║            ▓▓      magenta redline zone glitches,
+  ▓▓▓▓        ╚══════════════╝            ▓▓      throttle bar mirrors (magenta)
+  ▓▒░░ redline                            ██
+  ⌜ 92 ⌟km/h   ⌜ 87° ⌟C   ⌜ 14.2 ⌟V   ⌜ GEAR 3 ⌟
+  ── shift light: green→amber→red sequential across top ──
+                (scanline overlay whole screen)
+```
+
+### Dash layout (4fps, round, above golden bar — RPM arc space is ours now)
+```
+        ╭───────────────────────────╮
+      ╱   ◜ R P M   S E G M E N T S ◝  ╲     discrete neon blocks light up
+     │  ▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮░░░░░  redline ▮  │    with RPM (stepped, 4fps-safe)
+     │                                  │
+     │   ⟨ 4250 ⟩        GEAR 3         │    huge glowing number + gear
+     │                                  │
+     │  COOL 87°   BATT 14.2V   ⚠︎       │    numeric tiles; ⚠ glitches on alert
+      ╲   current street: MG Road      ╱     ← current street (from Valhalla)
+        ╰═══════ golden bar (RE) ══════╯
+```
+No smooth bars on the dash — RPM shown as stepped segment blocks + the big number. Glitch only
+on connect/alert. Everything else numeric.
+
+### Cruise vs Sport sub-modes (phone)
+- **Cruise:** calm — big speed, coolant/battery/fuel tiles, nav ETA. Minimal neon, no bars.
+- **Sport:** the full layout above — bars, shift light, glitch. Toggle.
+
+---
+
+## 5. Nav enhancement (related, from dash photo)
+Show the **current street name** during navigation (not just destination). Source: Valhalla
+maneuver `street_names` / `begin_street_names` (currently discarded in `Router.parseTrip`).
+Surface it in the phone nav card and the dash projected zone.
+
+---
+
+## 6. Build order (when we start)
+1. OBD data pipe (`obd/` module) → `ObdSnapshot` StateFlow. (Separate plan.)
+2. `EngineTheme` interface + Cyberpunk theme descriptor.
+3. Phone Sport screen (Compose) — the F&F-style bars in cyberpunk skin. Proves the pipe.
+4. Dash cyberpunk numeric layout in the MapRenderer path (reuses the projection pipeline).
+5. Boot sequence + glitch-on-alert.
+6. Future themes (F&F Sport, Tron…) as additional `EngineTheme` descriptors.
