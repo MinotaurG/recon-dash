@@ -206,6 +206,7 @@ class ActiveNavViewModel @Inject constructor(
         rideRecorder.addPoint(location)
 
         if (route == null) return
+        val rawPos = GeoPoint(location.latitude, location.longitude)
         val speed = location.speed
         val accuracy = if (location.hasAccuracy()) location.accuracy else Float.MAX_VALUE
 
@@ -214,9 +215,16 @@ class ActiveNavViewModel @Inject constructor(
             location.latitude, location.longitude, speed, accuracy,
         ) ?: return
 
-        // Snapped rider + bearing (rides the line, arrow rotates) and the traveled/ahead split.
-        _riderPosition.value = progress.snapped
-        _riderBearing.value = progress.bearing.toFloat()
+        // When ON-route, show the snapped point (rides the line). When OFF-route, show the RAW
+        // GPS position + heading so the marker follows the rider away from the stale route
+        // instead of freezing on the old line's nearest point (the "stuck" bug).
+        if (progress.offRoute) {
+            _riderPosition.value = rawPos
+            if (location.hasBearing()) _riderBearing.value = location.bearing
+        } else {
+            _riderPosition.value = progress.snapped
+            _riderBearing.value = progress.bearing.toFloat()
+        }
         _travelledGeometry.value = progress.traveledGeometry
         _aheadGeometry.value = progress.aheadGeometry
 
@@ -242,7 +250,9 @@ class ActiveNavViewModel @Inject constructor(
         )
 
         if (progress.offRoute) {
-            maybeReroute(progress.snapped, accuracy)
+            // Reroute from the RAW GPS position (where the rider actually IS), not the snapped
+            // point on the old route (which is where they left it).
+            maybeReroute(rawPos, accuracy)
         }
     }
 
