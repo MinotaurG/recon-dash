@@ -43,6 +43,8 @@ class ActiveNavViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "ActiveNavVM"
+        private const val MIN_REROUTE_INTERVAL_MS = 8_000L
+        private const val REROUTE_ACCURACY_GATE_M = 50f
     }
 
     private val _navState = MutableStateFlow(NavDisplayState())
@@ -56,6 +58,15 @@ class ActiveNavViewModel @Inject constructor(
 
     private val _riderPosition = MutableStateFlow<GeoPoint?>(null)
     val riderPosition = _riderPosition.asStateFlow()
+
+    private val _riderBearing = MutableStateFlow(0f)
+    val riderBearing = _riderBearing.asStateFlow()
+
+    // Route split for line trimming: traveled (grey, behind) + ahead (blue).
+    private val _travelledGeometry = MutableStateFlow<List<GeoPoint>>(emptyList())
+    val travelledGeometry = _travelledGeometry.asStateFlow()
+    private val _aheadGeometry = MutableStateFlow<List<GeoPoint>>(emptyList())
+    val aheadGeometry = _aheadGeometry.asStateFlow()
 
     val destination = GeoPoint(
         savedStateHandle.get<String>("destLat")?.toDoubleOrNull() ?: 0.0,
@@ -114,7 +125,7 @@ class ActiveNavViewModel @Inject constructor(
         }
     }
 
-    private suspend fun computeRoute(from: GeoPoint) {
+    private suspend fun computeRoute(from: GeoPoint, isReroute: Boolean = false) {
         val to = GeoPoint(destLat, destLng)
         var result = router.route(from, to)
         if (result is RouterResult.Failure) {
@@ -127,7 +138,10 @@ class ActiveNavViewModel @Inject constructor(
                 _routeGeometry.value = result.route.geometry
                 voiceManager = VoiceManager.get(context)
                 voiceManager?.resetTrip()
-                navSessionManager.startNavigation(result.route, destName)
+                // Reroute swaps the route (and resets the progress cursor) WITHOUT re-emitting the
+                // "nav started" event; only the initial route starts navigation.
+                if (isReroute) navSessionManager.updateRoute(result.route)
+                else navSessionManager.startNavigation(result.route, destName)
                 val r = result.route
                 val firstManeuver = r.maneuvers.firstOrNull { it.type != com.recon.dash.dash.nav.ManeuverType.DEPART }
                 _navState.value = NavDisplayState(
@@ -182,26 +196,30 @@ class ActiveNavViewModel @Inject constructor(
     }
 
     private fun onLocationUpdate(location: Location) {
-        if (!rideRecorder.isRecording.value && route != null &&
-            com.recon.dash.dash.DashConnectionState.isConnected
-        ) {
+        // Record phone-only rides too — the <100 m discard in RideRecorder is the clutter guard;
+        // the old dash-connected gate wrongly suppressed all phone-only rides.
+        if (!rideRecorder.isRecording.value && route != null) {
             rideRecorder.start(destName, location.latitude, location.longitude)
         }
         rideRecorder.addPoint(location)
 
-        _riderPosition.value = GeoPoint(location.latitude, location.longitude)
-
-        val currentRoute = route ?: return
-        val pos = GeoPoint(location.latitude, location.longitude)
+        if (route == null) return
         val speed = location.speed
+        val accuracy = if (location.hasAccuracy()) location.accuracy else Float.MAX_VALUE
 
-        navSessionManager.updatePosition(location.latitude, location.longitude, speed)
+        // ONE progress computation, shared by phone + dash via NavSessionManager.
+        val progress = navSessionManager.onLocationUpdate(
+            location.latitude, location.longitude, speed, accuracy,
+        ) ?: return
 
-        val progress = NavEngine.progress(currentRoute, pos, speed)
+        // Snapped rider + bearing (rides the line, arrow rotates) and the traveled/ahead split.
+        _riderPosition.value = progress.snapped
+        _riderBearing.value = progress.bearing.toFloat()
+        _travelledGeometry.value = progress.traveledGeometry
+        _aheadGeometry.value = progress.aheadGeometry
 
-        // Speed alert check
         val threshold = dashConfig.speedAlertKmh
-        val speedKmh = speed * 3.6f // m/s to km/h
+        val speedKmh = speed * 3.6f
         val alertActive = threshold > 0 && speedKmh > threshold
 
         _navState.value = NavDisplayState(
@@ -222,14 +240,36 @@ class ActiveNavViewModel @Inject constructor(
         )
 
         if (progress.offRoute) {
-            viewModelScope.launch { reroute(pos) }
+            maybeReroute(progress.snapped, accuracy)
         }
     }
 
-    private suspend fun reroute(from: GeoPoint) {
-        DebugLog.i(TAG) { "Off-route — recalculating" }
-        computeRoute(from)
-        route?.let { navSessionManager.updateRoute(it) }
+    // ── Debounced, single-flight reroute (fixes the reroute storm) ──
+    @Volatile private var rerouteInFlight = false
+    private var lastRerouteAtMs = 0L
+
+    private fun maybeReroute(from: GeoPoint, accuracyM: Float) {
+        val now = System.currentTimeMillis()
+        when {
+            rerouteInFlight ->
+                DebugLog.d(TAG) { "reroute suppressed: inFlight" }
+            now - lastRerouteAtMs < MIN_REROUTE_INTERVAL_MS ->
+                DebugLog.d(TAG) { "reroute suppressed: minInterval (${now - lastRerouteAtMs}ms)" }
+            accuracyM > REROUTE_ACCURACY_GATE_M ->
+                DebugLog.d(TAG) { "reroute suppressed: lowAccuracy ($accuracyM m)" }
+            else -> {
+                rerouteInFlight = true
+                lastRerouteAtMs = now
+                viewModelScope.launch {
+                    try {
+                        DebugLog.i(TAG) { "Off-route — recalculating from $from" }
+                        computeRoute(from, isReroute = true)
+                    } finally {
+                        rerouteInFlight = false
+                    }
+                }
+            }
+        }
     }
 
     private fun getLastKnownLocation(): GeoPoint? {

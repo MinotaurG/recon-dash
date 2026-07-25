@@ -141,13 +141,19 @@ class Router(private val context: Context) {
         return root.toString()
     }
 
-    private fun parseResponse(json: String): List<Route> {
+    private fun parseResponse(json: String): List<Route> = ValhallaTripParser.parse(json)
+}
+
+/**
+ * Pure parser for a Valhalla `/route` response → [Route] list. Extracted from [Router] (no
+ * Android Context / instance state) so the distance-axis correctness is unit-testable in JVM.
+ */
+internal object ValhallaTripParser {
+
+    fun parse(json: String): List<Route> {
         val root = JSONObject(json)
         val routes = ArrayList<Route>()
-
-        // Primary trip
         root.optJSONObject("trip")?.let { parseTrip(it)?.let { r -> routes.add(r) } }
-        // Alternates
         root.optJSONArray("alternates")?.let { alts ->
             for (i in 0 until alts.length()) {
                 alts.getJSONObject(i).optJSONObject("trip")?.let { parseTrip(it)?.let { r -> routes.add(r) } }
@@ -156,16 +162,20 @@ class Router(private val context: Context) {
         return routes
     }
 
-    private fun parseTrip(trip: JSONObject): Route? {
+    fun parseTrip(trip: JSONObject): Route? {
         val legs = trip.optJSONArray("legs") ?: return null
         if (legs.length() == 0) return null
 
         val geometry = ArrayList<GeoPoint>()
-        val maneuvers = ArrayList<Maneuver>()
-        // Running distance (m) from route start to the END of each maneuver, computed from
-        // Valhalla's own per-maneuver `length` field (km) rather than re-summing polyline
-        // segments by hand — the hand-computed version drifted and produced wrong distances.
-        var runningMeters = 0.0
+        // First pass: concatenate leg geometry and record each maneuver with its GLOBAL shape
+        // index. We deliberately do NOT compute distances from Valhalla's per-maneuver `length`
+        // here: NavEngine snaps the rider onto the haversine polyline, so maneuver distances
+        // MUST live on that same axis. Mixing Valhalla road-length with haversine snap distance
+        // was the root cause of wrong turn-by-turn distances. We assign cumulativeMeters from
+        // the haversine cumulative[] array (built below) via the maneuver's shape index.
+        data class RawManeuver(val type: ManeuverType, val instruction: String,
+                               val beginIdx: Int, val exitCount: Int, val valhallaLengthM: Double)
+        val raw = ArrayList<RawManeuver>()
 
         for (li in 0 until legs.length()) {
             val leg = legs.getJSONObject(li)
@@ -182,47 +192,49 @@ class Router(private val context: Context) {
                     val m = legManeuvers.getJSONObject(mi)
                     // begin_shape_index is PER-LEG and inclusive — offset into the global shape.
                     val beginIdx = (startIndex + m.optInt("begin_shape_index", 0))
-                        .coerceIn(0, geometry.size - 1)
-                    val loc = geometry.getOrNull(beginIdx) ?: continue
+                        .coerceIn(0, (geometry.size - 1).coerceAtLeast(0))
                     val type = mapValhallaType(m.optInt("type", 0))
                     // Prefer the verbal instruction (concise, spoken) then the written one.
                     val instruction = m.optString("verbal_pre_transition_instruction", "")
                         .ifBlank { m.optString("instruction", "") }
                     val exitCount = m.optInt("roundabout_exit_count", 0)
-                    // Valhalla `length` is this maneuver's distance in km — the authoritative
-                    // distance-to-next figure. cumulativeMeters = distance to where THIS
-                    // maneuver's leg ends (running sum), so NavEngine's next-maneuver lookup
-                    // and distance-to-turn come straight from Valhalla, not recomputed.
                     val lengthM = m.optDouble("length", 0.0) * 1000.0
-                    maneuvers.add(
-                        Maneuver(
-                            type = type,
-                            instruction = instruction,
-                            location = loc,
-                            cumulativeMeters = runningMeters,
-                            roundaboutExitCount = exitCount,
-                        )
-                    )
-                    runningMeters += lengthM
+                    raw.add(RawManeuver(type, instruction, beginIdx, exitCount, lengthM))
                 }
             }
         }
 
         if (geometry.size < 2) return null
 
+        // Haversine cumulative distance at each shape vertex — the single distance axis.
         val cumulative = DoubleArray(geometry.size)
         for (i in 1 until geometry.size) {
             cumulative[i] = cumulative[i - 1] + GeoPoint.distMeters(geometry[i - 1], geometry[i])
         }
 
+        // Second pass: place each maneuver on the haversine axis via its shape index, so
+        // NavEngine's `maneuver.cumulativeMeters - bestCum` distance-to-turn is correct.
+        val maneuvers = raw.map { rm ->
+            Maneuver(
+                type = rm.type,
+                instruction = rm.instruction,
+                location = geometry[rm.beginIdx.coerceIn(0, geometry.size - 1)],
+                cumulativeMeters = cumulative[rm.beginIdx.coerceIn(0, cumulative.size - 1)],
+                roundaboutExitCount = rm.exitCount,
+                valhallaLengthM = rm.valhallaLengthM,
+            )
+        }
+
         val summary = trip.optJSONObject("summary")
-        val totalMeters = (summary?.optDouble("length", 0.0) ?: 0.0) * 1000.0 // km → m
         val totalSeconds = summary?.optDouble("time", 0.0) ?: 0.0
+        // Use the haversine cumulative total (same axis as snapping) so remaining-distance and
+        // arrival math are consistent. Valhalla's summary.length is road-distance (different axis).
+        val totalMeters = cumulative.last()
 
         return Route(
             geometry = geometry,
             maneuvers = maneuvers,
-            totalMeters = if (totalMeters > 0) totalMeters else cumulative.last(),
+            totalMeters = totalMeters,
             totalSeconds = totalSeconds,
             cumulative = cumulative,
         )

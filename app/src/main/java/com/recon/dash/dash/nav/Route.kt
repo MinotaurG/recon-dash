@@ -33,23 +33,45 @@ data class Maneuver(
     val type: ManeuverType,
     val instruction: String,
     val location: GeoPoint,
-    /** Cumulative distance (m) from the route start to this maneuver's location. */
+    /**
+     * Cumulative distance (m) from the route start to this maneuver's location, measured on the
+     * SAME haversine polyline axis that [NavEngine] snaps onto. This is what makes
+     * distance-to-turn (`cumulativeMeters - snappedCumulative`) correct.
+     */
     val cumulativeMeters: Double,
     /** Roundabout exit number (Valhalla roundabout_exit_count); 0 when not a roundabout. */
     val roundaboutExitCount: Int = 0,
+    /** Valhalla's own maneuver length (m); kept for logging/diagnostics only, not for distances. */
+    val valhallaLengthM: Double = 0.0,
 ) {
     /** Dash maneuver glyph byte. CONTINUE (0x0B) is the only verified value. */
     val dashCode: Int get() = 0x0B // TODO: verify other glyph codes on fw 11.63
 }
 
-/** A computed road route from origin to destination. */
-data class Route(
+/**
+ * A computed road route from origin to destination.
+ *
+ * NOT a data class: it holds a [DoubleArray] ([cumulative]) whose structural equality is
+ * identity-based, which broke `data class` equals/hashCode and corrupted StateFlow dedup.
+ * Equality is instead based on a monotonic [routeId] assigned at creation, so each distinct
+ * route generation (initial route, each reroute) is a distinct value for flow purposes.
+ */
+class Route(
     val geometry: List<GeoPoint>,
     val maneuvers: List<Maneuver>,
     val totalMeters: Double,
     val totalSeconds: Double,
     /** Cumulative distance (m) at each geometry vertex — same length as [geometry]. */
     val cumulative: DoubleArray,
+    val routeId: Long = nextRouteId(),
 ) {
     val destination: GeoPoint? get() = geometry.lastOrNull()
+
+    override fun equals(other: Any?): Boolean = other is Route && other.routeId == routeId
+    override fun hashCode(): Int = routeId.hashCode()
+
+    companion object {
+        private val routeCounter = java.util.concurrent.atomic.AtomicLong(0L)
+        fun nextRouteId(): Long = routeCounter.incrementAndGet()
+    }
 }

@@ -4,19 +4,15 @@ import com.recon.dash.dash.nav.*
 import org.junit.Assert.*
 import org.junit.Test
 
+/** Basic behavior of the stateful [NavEngine] plus [GeoPoint] math. */
 class NavEngineTest {
 
     private fun straightRoute(): Route {
-        // Simple south-to-north line: 0,0 → 0,0.01 (~1.1 km)
-        val geom = listOf(
-            GeoPoint(0.0, 0.0),
-            GeoPoint(0.005, 0.0),
-            GeoPoint(0.01, 0.0),
-        )
+        // South-to-north line: (0,0) → (0.005,0) → (0.01,0), ~1.1 km.
+        val geom = listOf(GeoPoint(0.0, 0.0), GeoPoint(0.005, 0.0), GeoPoint(0.01, 0.0))
         val cum = DoubleArray(3)
         cum[1] = GeoPoint.distMeters(geom[0], geom[1])
         cum[2] = cum[1] + GeoPoint.distMeters(geom[1], geom[2])
-
         return Route(
             geometry = geom,
             maneuvers = listOf(
@@ -29,95 +25,82 @@ class NavEngineTest {
         )
     }
 
+    /** Good-accuracy fix (metres). */
+    private fun NavEngine.fix(p: GeoPoint, speed: Float = 10f, acc: Float = 5f) = update(p, speed, acc)
+
     @Test
-    fun `progress snaps rider to route and reports correct remaining distance`() {
-        val route = straightRoute()
-        val riderPos = GeoPoint(0.005, 0.0001) // slightly off the line, near midpoint
-
-        val progress = NavEngine.progress(route, riderPos, 10f)
-
-        // Should snap to approximately (0.005, 0.0)
-        assertEquals(0.005, progress.snapped.lat, 0.001)
-        assertEquals(0.0, progress.snapped.lng, 0.001)
-
-        // Remaining should be approximately half the total
-        assertTrue(progress.remainingMeters > 0)
-        assertTrue(progress.remainingMeters < route.totalMeters)
-        assertFalse(progress.offRoute)
-        assertFalse(progress.arrived)
+    fun `snaps rider to route and reports remaining distance`() {
+        val eng = NavEngine(straightRoute())
+        val p = eng.fix(GeoPoint(0.005, 0.0001)) // slightly off, near midpoint
+        assertEquals(0.005, p.snapped.lat, 0.001)
+        assertEquals(0.0, p.snapped.lng, 0.001)
+        assertTrue(p.remainingMeters > 0)
+        assertFalse(p.offRoute)
+        assertFalse(p.arrived)
     }
 
     @Test
-    fun `progress detects off-route when rider is far from line`() {
-        val route = straightRoute()
-        val farAway = GeoPoint(0.005, 0.01) // ~1km east of the route
-
-        val progress = NavEngine.progress(route, farAway, 10f)
-
-        assertTrue(progress.offRoute)
+    fun `single far fix does not immediately declare off-route (hysteresis)`() {
+        val eng = NavEngine(straightRoute())
+        val far = GeoPoint(0.005, 0.01) // ~1 km east
+        assertFalse("one off fix must not trip off-route", eng.fix(far).offRoute)
     }
 
     @Test
-    fun `progress detects arrival when near destination`() {
-        val route = straightRoute()
-        val nearEnd = GeoPoint(0.00999, 0.0) // very close to end
-
-        val progress = NavEngine.progress(route, nearEnd, 10f)
-
-        assertTrue(progress.arrived)
+    fun `sustained far fixes declare off-route after hysteresis`() {
+        val eng = NavEngine(straightRoute())
+        val far = GeoPoint(0.005, 0.01)
+        var off = false
+        repeat(6) { off = eng.fix(far).offRoute }
+        assertTrue("sustained off-route should trip", off)
     }
 
     @Test
-    fun `progress ETA uses GPS speed when available`() {
-        val route = straightRoute()
-        val start = GeoPoint(0.0, 0.0)
+    fun `low-accuracy fixes never vote off-route`() {
+        val eng = NavEngine(straightRoute())
+        val far = GeoPoint(0.005, 0.01)
+        var off = false
+        repeat(10) { off = eng.fix(far, acc = 500f).offRoute } // coarse NETWORK-like fix
+        assertFalse("coarse fixes must not trigger off-route", off)
+    }
 
-        val fast = NavEngine.progress(route, start, 20f) // 20 m/s = 72 km/h
-        val slow = NavEngine.progress(route, start, 5f)  // 5 m/s = 18 km/h
+    @Test
+    fun `arrival requires true destination proximity`() {
+        val eng = NavEngine(straightRoute())
+        // Walk up to the end.
+        eng.fix(GeoPoint(0.0, 0.0)); eng.fix(GeoPoint(0.005, 0.0))
+        assertTrue(eng.fix(GeoPoint(0.00999, 0.0)).arrived)
+    }
 
+    @Test
+    fun `ETA uses GPS speed when available`() {
+        val fast = NavEngine(straightRoute()).fix(GeoPoint(0.0, 0.0), speed = 20f)
+        val slow = NavEngine(straightRoute()).fix(GeoPoint(0.0, 0.0), speed = 5f)
         assertTrue(fast.etaSeconds < slow.etaSeconds)
     }
 
     @Test
-    fun `progress next maneuver skips DEPART`() {
-        val route = straightRoute()
-        val start = GeoPoint(0.0, 0.0)
-
-        val progress = NavEngine.progress(route, start, 10f)
-
-        // Should skip DEPART and point to ARRIVE
-        assertNotNull(progress.nextManeuver)
-        assertEquals(ManeuverType.ARRIVE, progress.nextManeuver?.type)
+    fun `next maneuver skips DEPART`() {
+        val p = NavEngine(straightRoute()).fix(GeoPoint(0.0, 0.0))
+        assertEquals(ManeuverType.ARRIVE, p.nextManeuver?.type)
     }
 
     @Test
     fun `GeoPoint distMeters gives reasonable values`() {
-        val a = GeoPoint(12.9716, 77.5946) // Bangalore
-        val b = GeoPoint(13.0827, 80.2707) // Chennai
-
-        val dist = GeoPoint.distMeters(a, b)
-        // ~290 km
-        assertTrue(dist > 280_000)
-        assertTrue(dist < 300_000)
+        val dist = GeoPoint.distMeters(GeoPoint(12.9716, 77.5946), GeoPoint(13.0827, 80.2707))
+        assertTrue(dist in 280_000.0..300_000.0)
     }
 
     @Test
     fun `GeoPoint bearing gives correct direction`() {
-        val south = GeoPoint(0.0, 0.0)
-        val north = GeoPoint(1.0, 0.0)
-
-        val bearing = GeoPoint.bearing(south, north)
-        assertEquals(0.0, bearing, 1.0) // due north
+        assertEquals(0.0, GeoPoint.bearing(GeoPoint(0.0, 0.0), GeoPoint(1.0, 0.0)), 1.0)
     }
 
     @Test
     fun `GeoPoint projectOnSegment clamps to endpoints`() {
-        val a = GeoPoint(0.0, 0.0)
-        val b = GeoPoint(0.0, 1.0)
-        val behind = GeoPoint(0.0, -0.5) // behind segment start
-
-        val (proj, t) = GeoPoint.projectOnSegment(behind, a, b)
-        assertEquals(0.0, t, 0.001) // clamped to start
+        val a = GeoPoint(0.0, 0.0); val b = GeoPoint(0.0, 1.0)
+        val (proj, t) = GeoPoint.projectOnSegment(GeoPoint(0.0, -0.5), a, b)
+        assertEquals(0.0, t, 0.001)
         assertEquals(a.lat, proj.lat, 0.0001)
         assertEquals(a.lng, proj.lng, 0.0001)
     }

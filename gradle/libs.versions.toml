@@ -14,6 +14,7 @@ securityCrypto = "1.1.0-alpha06"
 junit = "4.13.2"
 hiltNavigationCompose = "1.2.0"
 valhallaMobile = "0.5.1"
+turbine = "1.1.0"
 
 [libraries]
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -37,6 +38,8 @@ room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 valhalla-mobile = { group = "io.github.rallista", name = "valhalla-mobile", version.ref = "valhallaMobile" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

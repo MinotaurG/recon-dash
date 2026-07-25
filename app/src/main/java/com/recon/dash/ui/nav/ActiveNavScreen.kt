@@ -31,8 +31,10 @@ fun ActiveNavScreen(
 ) {
     val navState by viewModel.navState.collectAsStateWithLifecycle()
     val dashState by viewModel.dashStatus.collectAsStateWithLifecycle()
-    val routeGeometry by viewModel.routeGeometry.collectAsStateWithLifecycle()
     val riderPosition by viewModel.riderPosition.collectAsStateWithLifecycle()
+    val riderBearing by viewModel.riderBearing.collectAsStateWithLifecycle()
+    val travelledGeometry by viewModel.travelledGeometry.collectAsStateWithLifecycle()
+    val aheadGeometry by viewModel.aheadGeometry.collectAsStateWithLifecycle()
 
     val alertBorderColor by animateColorAsState(
         targetValue = if (navState.speedAlertActive) Color(0xFFFF453A) else Color.Transparent,
@@ -57,9 +59,12 @@ fun ActiveNavScreen(
             centerLat = viewModel.destination.lat,
             centerLng = viewModel.destination.lng,
             zoom = 12.0,
-            routeGeometry = routeGeometry,
+            travelledGeometry = travelledGeometry,
+            aheadGeometry = aheadGeometry,
+            followRider = true,
             destination = viewModel.destination,
             riderLocation = riderPosition,
+            riderBearing = riderBearing,
         )
 
         // Top overlay: maneuver / ETA

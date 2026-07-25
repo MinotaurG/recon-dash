@@ -75,6 +75,10 @@ android {
     }
 
     ndkVersion = "28.2.13676358"
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true // android.util.Log etc. return defaults in JVM tests
+    }
 }
 
 kotlin {
@@ -104,5 +108,8 @@ dependencies {
     ksp(libs.room.compiler)
     implementation(project(":valhalla"))
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.turbine)
+    testImplementation("org.json:json:20240303") // real org.json in JVM tests (Android stubs it)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

@@ -1,8 +1,6 @@
 package com.recon.dash.dash
 
-import com.recon.dash.dash.nav.GeoPoint
 import com.recon.dash.dash.nav.ManeuverType
-import com.recon.dash.dash.nav.NavEngine
 import com.recon.dash.dash.nav.Route
 import com.recon.dash.dash.protocol.DashCommands
 import com.recon.dash.media.MediaSessionListener
@@ -61,17 +59,15 @@ class NavDashBridge(
         DebugLog.i(TAG) { "Nav started — $destinationName (${route.totalMeters.toInt()}m)" }
     }
 
-    fun updatePosition(lat: Double, lng: Double, speedMps: Float) {
-        val route = currentRoute ?: return
-        val pos = GeoPoint(lat, lng)
-        val progress = NavEngine.progress(route, pos, speedMps)
-
+    /**
+     * Push the shared [NavProgress] snapshot to the dash's nav bubble. The progress is computed
+     * once in [NavSessionManager]; the dash no longer runs its own NavEngine (kept both surfaces
+     * consistent and fixed the duplicate-computation drift).
+     */
+    fun updateProgress(progress: NavProgress) {
         val maneuverCode = mapManeuverToDashCode(progress.nextManeuver?.type)
-        val distM = progress.distanceToManeuverM
-        val remainM = progress.remainingMeters
-
-        val (primaryDist, primaryUnit) = toDashDistUnit(distM)
-        val (totalDist, totalUnit) = toDashDistUnit(remainM)
+        val (primaryDist, primaryUnit) = toDashDistUnit(progress.distanceToManeuverM)
+        val (totalDist, totalUnit) = toDashDistUnit(progress.remainingMeters)
 
         val etaMinutes = (progress.etaSeconds / 60).toInt()
         val etaHHMM = "%02d%02d".format(etaMinutes / 60, etaMinutes % 60)

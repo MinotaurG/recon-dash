@@ -300,9 +300,10 @@ class DashViewModel @Inject constructor(
                 }
             }
             launch {
-                navSessionManager.latestPosition.collect { update ->
-                    if (update != null && navSessionManager.isNavigating.value) {
-                        bridge.updatePosition(update.lat, update.lng, update.speedMps)
+                // Single shared progress snapshot drives the dash nav bubble.
+                navSessionManager.progress.collect { progress ->
+                    if (progress != null && navSessionManager.isNavigating.value) {
+                        bridge.updateProgress(progress)
                     }
                 }
             }
@@ -312,22 +313,6 @@ class DashViewModel @Inject constructor(
                 }
             }
         }
-    }
-
-    fun startNavOnDash(route: Route, destinationName: String) {
-        bridge?.startNavigation(route, destinationName)
-    }
-
-    fun updatePositionOnDash(lat: Double, lng: Double, speedMps: Float) {
-        bridge?.updatePosition(lat, lng, speedMps)
-    }
-
-    fun updateRouteOnDash(route: Route) {
-        bridge?.updateRoute(route)
-    }
-
-    fun stopNavOnDash() {
-        bridge?.stopNavigation()
     }
 
     private fun prepareDigitalPipeline(sess: DashSession) {
@@ -386,32 +371,28 @@ class DashViewModel @Inject constructor(
                    sess.state.value == DashState.READY)) {
                 val start = SystemClock.elapsedRealtime()
                 val navigating = navSessionManager.isNavigating.value
-                val pos = navSessionManager.latestPosition.value
+                val progress = navSessionManager.progress.value
                 val route = navSessionManager.activeRoute.value
                 val destName = navSessionManager.destinationName.value
 
                 enc.renderFrame { canvas ->
-                    if (navigating && pos != null) {
-                        val geometry = route?.geometry ?: emptyList()
-                        val dest = geometry.lastOrNull()
-                        // Heading toward the next route point so the map orients travel-up
-                        // and the rider arrow points the right way (matches the RE app view).
-                        val heading = headingAlong(geometry, pos.lat, pos.lng)
+                    if (navigating && progress != null) {
+                        val dest = route?.destination
+                        // Use the SHARED snapped progress: rider rides the snapped line, bearing
+                        // is travel-up, and the route is split into traveled (grey) + ahead (blue).
                         renderer.draw(canvas, MapRenderer.Frame(
-                            centerLat = pos.lat,
-                            centerLng = pos.lng,
+                            centerLat = progress.snapped.lat,
+                            centerLng = progress.snapped.lng,
                             zoom = 17,
                             headingUp = true,
-                            heading = heading,
-                            // Passing riderLat/route/dest is what draws the position arrow,
-                            // the blue route line, and clears the "waiting for GPS" banner
-                            // (which showed permanently because these were never provided).
-                            riderLat = pos.lat,
-                            riderLng = pos.lng,
+                            heading = progress.bearing.toFloat(),
+                            riderLat = progress.snapped.lat,
+                            riderLng = progress.snapped.lng,
                             destLat = dest?.lat,
                             destLng = dest?.lng,
                             destName = destName.ifBlank { null },
-                            route = geometry,
+                            route = progress.aheadGeometry,
+                            travelledRoute = progress.traveledGeometry,
                         ))
                     } else if (idle != null) {
                         idle.draw(
@@ -434,7 +415,7 @@ class DashViewModel @Inject constructor(
                 // Heartbeat log once a second so we can see the loop is alive and whether
                 // it has a position/nav state (diagnosing the "map not streaming" issue).
                 if (start - lastLog >= 1000) {
-                    DebugLog.i(TAG) { "Render: ${frames}f/s navigating=$navigating pos=${pos != null}" }
+                    DebugLog.i(TAG) { "Render: ${frames}f/s navigating=$navigating progress=${progress != null}" }
                     frames = 0; lastLog = start
                 }
                 val elapsed = SystemClock.elapsedRealtime() - start
@@ -442,28 +423,6 @@ class DashViewModel @Inject constructor(
             }
             DebugLog.w(TAG) { "Render loop ENDED (state=${sess.state.value})" }
         }
-    }
-
-    /**
-     * Bearing (degrees) from the rider toward the closest route point ahead, so the dash map
-     * orients travel-up and the rider arrow points along the route. Falls back to 0 (north-up)
-     * when there's no usable route geometry.
-     */
-    private fun headingAlong(route: List<com.recon.dash.dash.nav.GeoPoint>, lat: Double, lng: Double): Float {
-        if (route.size < 2) return 0f
-        // Find the nearest route vertex, then aim at the one after it.
-        var nearestIdx = 0
-        var nearestD = Double.MAX_VALUE
-        for (i in route.indices) {
-            val d = (route[i].lat - lat) * (route[i].lat - lat) + (route[i].lng - lng) * (route[i].lng - lng)
-            if (d < nearestD) { nearestD = d; nearestIdx = i }
-        }
-        val target = route.getOrNull(nearestIdx + 1) ?: route[nearestIdx]
-        val dLng = Math.toRadians(target.lng - lng)
-        val y = Math.sin(dLng) * Math.cos(Math.toRadians(target.lat))
-        val x = Math.cos(Math.toRadians(lat)) * Math.sin(Math.toRadians(target.lat)) -
-            Math.sin(Math.toRadians(lat)) * Math.cos(Math.toRadians(target.lat)) * Math.cos(dLng)
-        return ((Math.toDegrees(Math.atan2(y, x)) + 360.0) % 360.0).toFloat()
     }
 
     private fun releaseDigitalPipeline() {

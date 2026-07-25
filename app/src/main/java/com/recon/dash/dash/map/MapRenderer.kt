@@ -34,7 +34,8 @@ class MapRenderer(private val tiles: TileProvider) {
         val destLat: Double? = null,
         val destLng: Double? = null,
         val destName: String? = null,
-        val route: List<GeoPoint> = emptyList(),
+        val route: List<GeoPoint> = emptyList(),          // route AHEAD of the rider (blue)
+        val travelledRoute: List<GeoPoint> = emptyList(), // route already ridden (grey, behind)
         val maneuverText: String? = null,  // e.g. "Turn left · 400 m"
         val remainingText: String? = null, // e.g. "186 km"
         val tilt3d: Boolean = false,       // perspective 3D view (nav heading-up only)
@@ -60,6 +61,12 @@ class MapRenderer(private val tiles: TileProvider) {
     }
     private val routePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = routeBlue; style = Paint.Style.STROKE
+        strokeWidth = 6f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    // Route already ridden — muted grey, drawn beneath the blue ahead line so the path
+    // "consumes" behind the rider (matches Google/Organic Maps).
+    private val travelledPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(154, 160, 166); style = Paint.Style.STROKE
         strokeWidth = 6f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
     private val dotPaint     = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -146,7 +153,15 @@ class MapRenderer(private val tiles: TileProvider) {
             canvas.drawBitmap(bmp, null, tmpRect, tilePaint)
         }
 
-        // ── Road route polyline ──
+        // ── Travelled route (grey, behind the rider) — drawn first so blue ahead sits on top ──
+        if (f.travelledRoute.size >= 2) {
+            routePath.reset()
+            routePath.moveTo(sx(f.travelledRoute[0].lng), sy(f.travelledRoute[0].lat))
+            for (i in 1 until f.travelledRoute.size) routePath.lineTo(sx(f.travelledRoute[i].lng), sy(f.travelledRoute[i].lat))
+            canvas.drawPath(routePath, travelledPaint)
+        }
+
+        // ── Road route ahead (blue) ──
         if (f.route.size >= 2) {
             routePath.reset()
             routePath.moveTo(sx(f.route[0].lng), sy(f.route[0].lat))

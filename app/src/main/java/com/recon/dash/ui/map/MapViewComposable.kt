@@ -31,6 +31,8 @@ import org.maplibre.geojson.Point
 
 private const val ROUTE_SOURCE = "route-source"
 private const val ROUTE_LAYER = "route-layer"
+private const val TRAVELLED_SOURCE = "travelled-source"
+private const val TRAVELLED_LAYER = "travelled-layer"
 private const val DEST_SOURCE = "dest-source"
 private const val DEST_LAYER = "dest-layer"
 private const val DEST_ICON = "dest-pin"
@@ -53,6 +55,11 @@ fun MapViewComposable(
     centerLng: Double = 78.9629,
     zoom: Double = 4.0,
     routeGeometry: List<GeoPoint> = emptyList(),
+    // When set (live nav), the route is drawn as two layers — traveled (grey) + ahead (blue) —
+    // and the camera FOLLOWS the rider (travel-up) instead of re-fitting the whole route.
+    travelledGeometry: List<GeoPoint> = emptyList(),
+    aheadGeometry: List<GeoPoint> = emptyList(),
+    followRider: Boolean = false,
     destination: GeoPoint? = null,
     riderLocation: GeoPoint? = null,
     riderBearing: Float = 0f,
@@ -92,7 +99,8 @@ fun MapViewComposable(
                 map.cameraPosition = CameraPosition.Builder()
                     .target(LatLng(centerLat, centerLng)).zoom(zoom).build()
 
-                applyRoute(map, style, routeGeometry, destination, riderLocation, riderBearing)
+                applyRoute(map, style, routeGeometry, travelledGeometry, aheadGeometry,
+                    followRider, destination, riderLocation, riderBearing)
                 onMapReady?.invoke(map)
             }
         }
@@ -100,11 +108,12 @@ fun MapViewComposable(
     }
 
     // Update route/marker in place whenever they change (no map recreation).
-    LaunchedEffect(routeGeometry, destination, riderLocation, riderBearing) {
+    LaunchedEffect(routeGeometry, travelledGeometry, aheadGeometry, destination, riderLocation, riderBearing) {
         val map = mapRef[0]
         val style = styleRef[0]
         if (map != null && style != null && style.isFullyLoaded) {
-            applyRoute(map, style, routeGeometry, destination, riderLocation, riderBearing)
+            applyRoute(map, style, routeGeometry, travelledGeometry, aheadGeometry,
+                followRider, destination, riderLocation, riderBearing)
         }
     }
 
@@ -115,28 +124,22 @@ private fun applyRoute(
     map: MapLibreMap,
     style: Style,
     geometry: List<GeoPoint>,
+    travelledGeometry: List<GeoPoint>,
+    aheadGeometry: List<GeoPoint>,
+    followRider: Boolean,
     destination: GeoPoint?,
     riderLocation: GeoPoint? = null,
     riderBearing: Float = 0f,
 ) {
-    // Route line — update existing source if present, else create.
-    if (geometry.size >= 2) {
-        val line = LineString.fromLngLats(geometry.map { Point.fromLngLat(it.lng, it.lat) })
-        val existing = style.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)
-        if (existing != null) {
-            existing.setGeoJson(line)
-        } else {
-            style.addSource(GeoJsonSource(ROUTE_SOURCE, line))
-            style.addLayer(
-                LineLayer(ROUTE_LAYER, ROUTE_SOURCE).withProperties(
-                    PropertyFactory.lineColor("#4285F4"),
-                    PropertyFactory.lineWidth(5.5f),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                )
-            )
-        }
-    }
+    // In follow (live-nav) mode the blue "ahead" line is the trimmed remainder; otherwise
+    // (preview) the blue line is the full route.
+    val aheadLine = if (followRider) aheadGeometry else geometry
+
+    // Travelled portion — grey, behind the rider (only in follow mode).
+    setLine(style, TRAVELLED_SOURCE, TRAVELLED_LAYER, travelledGeometry, "#9AA0A6", 5f, below = ROUTE_LAYER)
+
+    // Route line ahead — blue.
+    setLine(style, ROUTE_SOURCE, ROUTE_LAYER, aheadLine, "#4285F4", 5.5f, below = null)
 
     // Destination pin.
     if (destination != null) {
@@ -198,8 +201,18 @@ private fun applyRoute(
         }
     }
 
-    // Fit camera to the route (or centre on destination).
     when {
+        // Live nav: FOLLOW the rider (travel-up), do NOT re-fit the whole route every fix
+        // (that fought the rider and kept zooming out).
+        followRider && riderLocation != null -> {
+            val cam = CameraPosition.Builder()
+                .target(LatLng(riderLocation.lat, riderLocation.lng))
+                .zoom(16.5)
+                .bearing(riderBearing.toDouble())
+                .build()
+            runCatching { map.easeCamera(CameraUpdateFactory.newCameraPosition(cam), 800) }
+        }
+        // Preview: fit the whole route once.
         geometry.size >= 2 -> {
             val b = LatLngBounds.Builder()
             geometry.forEach { b.include(LatLng(it.lat, it.lng)) }
@@ -208,6 +221,35 @@ private fun applyRoute(
         destination != null -> {
             map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(destination.lat, destination.lng), 15.0))
         }
+    }
+}
+
+/** Create/update a line layer's geometry in place; optionally insert below another layer. */
+private fun setLine(
+    style: Style, sourceId: String, layerId: String,
+    points: List<GeoPoint>, color: String, width: Float, below: String?,
+) {
+    if (points.size < 2) {
+        // Clear stale geometry (e.g. travelled line before the first fix).
+        style.getSourceAs<GeoJsonSource>(sourceId)?.setGeoJson(
+            LineString.fromLngLats(emptyList())
+        )
+        return
+    }
+    val line = LineString.fromLngLats(points.map { Point.fromLngLat(it.lng, it.lat) })
+    val existing = style.getSourceAs<GeoJsonSource>(sourceId)
+    if (existing != null) {
+        existing.setGeoJson(line)
+    } else {
+        style.addSource(GeoJsonSource(sourceId, line))
+        val layer = LineLayer(layerId, sourceId).withProperties(
+            PropertyFactory.lineColor(color),
+            PropertyFactory.lineWidth(width),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+        )
+        if (below != null && style.getLayer(below) != null) style.addLayerBelow(layer, below)
+        else style.addLayer(layer)
     }
 }
 
