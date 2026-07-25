@@ -112,19 +112,25 @@ Breach-protocol style: scanlines sweep top→bottom; text scrambles in
 ```
 
 ### Dash layout (4fps, round, above golden bar — RPM arc space is ours now)
+
+**Do NOT duplicate what the golden bar already shows** (RE's native widget renders: turn arrow,
+current street, dist-to-turn, dest dist, clock, ambient temp, **gear**, **speed**, fuel range).
+Our zone shows what the RE cluster does NOT: the engine-health data.
+
 ```
         ╭───────────────────────────╮
       ╱   ◜ R P M   S E G M E N T S ◝  ╲     discrete neon blocks light up
      │  ▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮░░░░░  redline ▮  │    with RPM (stepped, 4fps-safe)
      │                                  │
-     │   ⟨ 4250 ⟩        GEAR 3         │    huge glowing number + gear
+     │        ⟨ 4 2 5 0 ⟩               │    huge glowing RPM number (hero)
      │                                  │
-     │  COOL 87°   BATT 14.2V   ⚠︎       │    numeric tiles; ⚠ glitches on alert
-      ╲   current street: MG Road      ╱     ← current street (from Valhalla)
-        ╰═══════ golden bar (RE) ══════╯
+     │  COOL 87°   BATT 14.2V   ⚠︎       │    engine data the bar lacks;
+     │  LOAD 34%   THR 60%             │    ⚠ glitches on thermal/batt alert
+        ╰═══════ golden bar (RE) ══════╯     (gear + speed already in the bar)
 ```
-No smooth bars on the dash — RPM shown as stepped segment blocks + the big number. Glitch only
-on connect/alert. Everything else numeric.
+RPM is the hero (the bar doesn't show it well). Coolant/battery/load/throttle are the value-add.
+Gear + speed intentionally omitted — already in the golden bar. No smooth bars (4fps); RPM as
+stepped segment blocks + big number. Glitch only on connect/alert.
 
 ### Cruise vs Sport sub-modes (phone)
 - **Cruise:** calm — big speed, coolant/battery/fuel tiles, nav ETA. Minimal neon, no bars.
@@ -133,9 +139,10 @@ on connect/alert. Everything else numeric.
 ---
 
 ## 5. Nav enhancement (related, from dash photo)
-Show the **current street name** during navigation (not just destination). Source: Valhalla
-maneuver `street_names` / `begin_street_names` (currently discarded in `Router.parseTrip`).
-Surface it in the phone nav card and the dash projected zone.
+Show the **current street name** during navigation on the **PHONE nav card** (not just
+destination). Source: Valhalla maneuver `street_names` / `begin_street_names` (currently discarded
+in `Router.parseTrip`). NOTE: the dash golden bar already shows the current street via RE's native
+widget — so this is a phone-side enhancement; don't duplicate it in the dash projected zone.
 
 ---
 
