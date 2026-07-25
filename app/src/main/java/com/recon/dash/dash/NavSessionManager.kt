@@ -4,6 +4,7 @@ import com.recon.dash.dash.nav.GeoPoint
 import com.recon.dash.dash.nav.Maneuver
 import com.recon.dash.dash.nav.NavEngine
 import com.recon.dash.dash.nav.Route
+import com.recon.dash.util.NavLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
@@ -71,6 +72,7 @@ class NavSessionManager @Inject constructor() {
         _isNavigating.value = true
         engine = NavEngine(route)          // fresh progress cursor for the new route
         _progress.value = null
+        NavLog.event("nav_start", "dest=$destination m=${route.totalMeters.toInt()} man=${route.maneuvers.size}")
     }
 
     /** Reroute: swap in the new route AND reset the progress cursor to match it. */
@@ -78,6 +80,7 @@ class NavSessionManager @Inject constructor() {
         _activeRoute.value = route
         engine = NavEngine(route)
         _progress.value = null
+        NavLog.event("route_swapped", "m=${route.totalMeters.toInt()} man=${route.maneuvers.size}")
     }
 
     /**
@@ -103,6 +106,12 @@ class NavSessionManager @Inject constructor() {
             snapDistanceM = p.snapDistanceM,
         )
         _progress.value = snapshot
+        NavLog.fix(
+            lat = lat, lng = lng, accM = accuracyM, snapM = p.snapDistanceM,
+            cumM = p.traveledMeters, remM = p.remainingMeters, dManM = p.distanceToManeuverM,
+            maneuver = p.nextManeuver?.instruction, offRoute = p.offRoute,
+            arrived = p.arrived, speedMps = speedMps,
+        )
         return snapshot
     }
 
@@ -113,5 +122,6 @@ class NavSessionManager @Inject constructor() {
         _latestPosition.value = null
         _progress.value = null
         engine = null
+        NavLog.event("nav_stop")
     }
 }

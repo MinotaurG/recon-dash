@@ -151,6 +151,8 @@ class ActiveNavViewModel @Inject constructor(
                     nextInstruction = firstManeuver?.instruction,
                     destinationName = destName,
                 )
+                val src = if (result.route.maneuvers.isNotEmpty()) "valhalla/osrm" else "unknown"
+                com.recon.dash.util.NavLog.route(src, r.totalMeters, r.maneuvers.size, reroute = isReroute)
                 DebugLog.i(TAG) { "Route computed — ${r.totalMeters.toInt()}m, ${r.maneuvers.size} maneuvers" }
             }
             is RouterResult.Failure -> {
@@ -252,17 +254,17 @@ class ActiveNavViewModel @Inject constructor(
         val now = System.currentTimeMillis()
         when {
             rerouteInFlight ->
-                DebugLog.d(TAG) { "reroute suppressed: inFlight" }
+                com.recon.dash.util.NavLog.reroute(fired = false, reason = "inFlight")
             now - lastRerouteAtMs < MIN_REROUTE_INTERVAL_MS ->
-                DebugLog.d(TAG) { "reroute suppressed: minInterval (${now - lastRerouteAtMs}ms)" }
+                com.recon.dash.util.NavLog.reroute(fired = false, reason = "minInterval:${now - lastRerouteAtMs}ms")
             accuracyM > REROUTE_ACCURACY_GATE_M ->
-                DebugLog.d(TAG) { "reroute suppressed: lowAccuracy ($accuracyM m)" }
+                com.recon.dash.util.NavLog.reroute(fired = false, reason = "lowAccuracy:${accuracyM.toInt()}m")
             else -> {
                 rerouteInFlight = true
                 lastRerouteAtMs = now
+                com.recon.dash.util.NavLog.reroute(fired = true, reason = "offRoute")
                 viewModelScope.launch {
                     try {
-                        DebugLog.i(TAG) { "Off-route — recalculating from $from" }
                         computeRoute(from, isReroute = true)
                     } finally {
                         rerouteInFlight = false
@@ -280,6 +282,7 @@ class ActiveNavViewModel @Inject constructor(
                 ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
             loc?.let { GeoPoint(it.latitude, it.longitude) }
         } catch (e: SecurityException) {
+            DebugLog.w(TAG) { "getLastKnownLocation: permission denied: ${e.message}" }
             null
         }
     }

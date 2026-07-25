@@ -114,10 +114,9 @@ class NavEngine(private val route: Route) {
         val speed = if (speedMps > 0.5f) speedMps.toDouble() else DEFAULT_SPEED_MPS
         val eta = remaining / speed
 
-        DebugLog.d(TAG) {
-            "NAVFIX snap=%.0f cur=%d cum=%.0f rem=%.0f dman=%.0f offv=%d off=%b arr=%b acc=%.0f".format(
-                best.dist, cursor, traveled, remaining, distToManeuver, offRouteVotes, offRoute, arrived, accuracyM)
-        }
+        // NavSessionManager emits the user-facing NAVFIX line; here we keep only the internal
+        // matcher detail (cursor + off-route vote count) that isn't in the snapshot.
+        DebugLog.d(TAG) { "match cur=$cursor offv=$offRouteVotes reacq=${best.index}" }
 
         return Progress(
             snapped = best.snap,

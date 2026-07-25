@@ -13,6 +13,7 @@ object LocationHelper {
                 ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
             loc?.let { GeoPoint(it.latitude, it.longitude) }
         } catch (e: SecurityException) {
+            DebugLog.w("LocationHelper") { "Location permission denied: ${e.message}" }
             null
         }
     }
