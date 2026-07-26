@@ -66,12 +66,19 @@ class NavSessionManager @Inject constructor() {
 
     private var engine: NavEngine? = null
 
+    // After a reroute we suppress off-route detection for a short grace window so the fresh
+    // NavEngine (cursor at 0 on the new route) can acquire the rider's position — otherwise the
+    // very next fix re-trips off-route and we feedback-loop into a reroute storm.
+    @Volatile private var offRouteSuppressedUntilMs = 0L
+    private val graceMs = 6_000L
+
     fun startNavigation(route: Route, destination: String) {
         _activeRoute.value = route
         _destinationName.value = destination
         _isNavigating.value = true
         engine = NavEngine(route)          // fresh progress cursor for the new route
         _progress.value = null
+        offRouteSuppressedUntilMs = System.currentTimeMillis() + graceMs
         NavLog.event("nav_start", "dest=$destination m=${route.totalMeters.toInt()} man=${route.maneuvers.size}")
     }
 
@@ -80,6 +87,7 @@ class NavSessionManager @Inject constructor() {
         _activeRoute.value = route
         engine = NavEngine(route)
         _progress.value = null
+        offRouteSuppressedUntilMs = System.currentTimeMillis() + graceMs
         NavLog.event("route_swapped", "m=${route.totalMeters.toInt()} man=${route.maneuvers.size}")
     }
 
@@ -87,11 +95,13 @@ class NavSessionManager @Inject constructor() {
      * Feed a GPS fix; runs the single NavEngine update and republishes [progress].
      * Returns the fresh snapshot (or null if not navigating) so callers can act immediately.
      */
-    fun onLocationUpdate(lat: Double, lng: Double, speedMps: Float, accuracyM: Float): NavProgress? {
+    fun onLocationUpdate(lat: Double, lng: Double, speedMps: Float, accuracyM: Float, bearingDeg: Float? = null): NavProgress? {
         _latestPosition.value = NavUpdate(lat, lng, speedMps, System.currentTimeMillis())
         val eng = engine ?: return null
-        val p = eng.update(GeoPoint(lat, lng), speedMps, accuracyM)
+        val p = eng.update(GeoPoint(lat, lng), speedMps, accuracyM, bearingDeg)
         val (traveled, ahead) = eng.split(p)
+        // Honor the post-reroute grace window: don't surface off-route while the new route settles.
+        val offRoute = p.offRoute && System.currentTimeMillis() >= offRouteSuppressedUntilMs
         val snapshot = NavProgress(
             snapped = p.snapped,
             bearing = p.routeBearing,
@@ -101,7 +111,7 @@ class NavSessionManager @Inject constructor() {
             nextManeuver = p.nextManeuver,
             remainingMeters = p.remainingMeters,
             etaSeconds = p.etaSeconds,
-            offRoute = p.offRoute,
+            offRoute = offRoute,
             arrived = p.arrived,
             snapDistanceM = p.snapDistanceM,
         )
@@ -109,7 +119,7 @@ class NavSessionManager @Inject constructor() {
         NavLog.fix(
             lat = lat, lng = lng, accM = accuracyM, snapM = p.snapDistanceM,
             cumM = p.traveledMeters, remM = p.remainingMeters, dManM = p.distanceToManeuverM,
-            maneuver = p.nextManeuver?.instruction, offRoute = p.offRoute,
+            maneuver = p.nextManeuver?.instruction, offRoute = offRoute,
             arrived = p.arrived, speedMps = speedMps,
         )
         return snapshot

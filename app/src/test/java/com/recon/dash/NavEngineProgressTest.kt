@@ -64,6 +64,29 @@ class NavEngineProgressTest {
     }
 
     @Test
+    fun `far-from-polyline but heading-along is NOT off-route (roundabout case)`() {
+        // The real ride bug: on a roundabout the rider is 70-140m from the sparse route chord but
+        // still travelling ALONG the route direction. Heading agreement must keep it on-route.
+        // Route heads east (bearing ~90°).
+        val route = routeOf(GeoPoint(17.40, 78.32), GeoPoint(17.40, 78.33), GeoPoint(17.40, 78.34))
+        val eng = NavEngine(route)
+        // Rider ~80m north of the line (roundabout arc) but heading EAST (~90°), fast.
+        var off = false
+        repeat(10) { off = eng.update(GeoPoint(17.4007, 78.325), speedMps = 15f, accuracyM = 5f, bearingDeg = 90f).offRoute }
+        assertFalse("heading along the route must not trip off-route despite big snap distance", off)
+    }
+
+    @Test
+    fun `far AND heading-against the route IS off-route (real wrong turn)`() {
+        val route = routeOf(GeoPoint(17.40, 78.32), GeoPoint(17.40, 78.33), GeoPoint(17.40, 78.34))
+        val eng = NavEngine(route)
+        // Rider well off the line AND heading NORTH (~0°) while route runs east — a real deviation.
+        var off = false
+        repeat(8) { off = eng.update(GeoPoint(17.405, 78.325), speedMps = 15f, accuracyM = 5f, bearingDeg = 0f).offRoute }
+        assertTrue("far + wrong heading is a genuine off-route", off)
+    }
+
+    @Test
     fun `off-route recovery resets the vote counter`() {
         val route = routeOf(GeoPoint(0.0, 0.0), GeoPoint(0.0, 0.006))
         val eng = NavEngine(route)

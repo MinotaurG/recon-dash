@@ -85,9 +85,23 @@ fun ActiveNavScreen(
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = DarkSurface.copy(alpha = 0.95f)),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (navState.arrived) Color(0xFF14351F).copy(alpha = 0.96f)
+                                     else DarkSurface.copy(alpha = 0.95f),
+                ),
                 shape = RoundedCornerShape(16.dp),
             ) {
+                if (navState.arrived) {
+                    // Arrival summary — destination reached, navigation ended.
+                    Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                        Text("Arrived", color = Color(0xFF7ED957), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = navState.destinationName,
+                            color = OnSurface,
+                            fontSize = 14.sp,
+                        )
+                    }
+                } else
                 Row(
                     modifier = Modifier.padding(16.dp).fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,

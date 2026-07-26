@@ -211,8 +211,9 @@ class ActiveNavViewModel @Inject constructor(
         val accuracy = if (location.hasAccuracy()) location.accuracy else Float.MAX_VALUE
 
         // ONE progress computation, shared by phone + dash via NavSessionManager.
+        val bearing = if (location.hasBearing()) location.bearing else null
         val progress = navSessionManager.onLocationUpdate(
-            location.latitude, location.longitude, speed, accuracy,
+            location.latitude, location.longitude, speed, accuracy, bearing,
         ) ?: return
 
         // When ON-route, show the snapped point (rides the line). When OFF-route, show the RAW
@@ -249,11 +250,32 @@ class ActiveNavViewModel @Inject constructor(
             progress.remainingMeters,
         )
 
-        if (progress.offRoute) {
+        if (progress.arrived && !arrivedHandled) {
+            // Reached the destination — end navigation once, save the ride, and let the screen
+            // show the arrival summary. Guarded so it fires exactly once.
+            arrivedHandled = true
+            com.recon.dash.util.NavLog.event("arrived", "rem=${progress.remainingMeters.toInt()}")
+            DebugLog.i(TAG) { "Arrived at destination — ending navigation" }
+            onArrival()
+        } else if (progress.offRoute) {
             // Reroute from the RAW GPS position (where the rider actually IS), not the snapped
             // point on the old route (which is where they left it).
             maybeReroute(rawPos, accuracy)
         }
+    }
+
+    @Volatile private var arrivedHandled = false
+
+    /** Destination reached: stop location updates + save the ride, keep the arrival UI. */
+    private fun onArrival() {
+        locationListener?.let { listener ->
+            (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(listener)
+        }
+        locationListener = null
+        voiceManager?.resetTrip()
+        navSessionManager.stopNavigation()
+        viewModelScope.launch { rideRecorder.stop() }
+        // navState already carries arrived=true; the screen shows the arrival summary card.
     }
 
     // ── Debounced, single-flight reroute (fixes the reroute storm) ──
