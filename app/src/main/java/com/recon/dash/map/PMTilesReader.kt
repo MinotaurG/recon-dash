@@ -6,15 +6,16 @@ import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.GZIPInputStream
-import java.util.zip.Inflater
-import java.util.zip.InflaterInputStream
 
 /**
- * Reads individual tiles from a local PMTiles v3 archive.
+ * Reads individual tiles from a local [PMTiles v3](https://github.com/protomaps/PMTiles) archive.
  *
- * PMTiles is a single-file tile archive format that supports HTTP range requests
- * or local random-access reads. This implementation reads from a local file
- * using RandomAccessFile for zero-copy tile extraction.
+ * Spec-verified port of the standalone `pmtiles-kotlin` library
+ * (https://github.com/MinotaurG/pmtiles-kotlin), which is tested against the official Protomaps
+ * fixtures + golden Hilbert tile-id values. The earlier version of this file had never worked
+ * against a real archive: it read a 2-byte magic (spec magic is the 7-byte string "PMTiles"),
+ * applied a TMS y-flip PMTiles does not use, had an off-by-one Hilbert base, and mis-decoded
+ * directory offsets. All fixed here; see the library repo for the test suite.
  *
  * Format reference: https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md
  */
@@ -22,20 +23,23 @@ class PMTilesReader(private val file: File) {
 
     companion object {
         private const val TAG = "PMTilesReader"
-        private const val HEADER_SIZE = 127L
-        private const val MAGIC = 0x4D50 // "PM" in little-endian
+        private const val HEADER_SIZE = 127
+        private val MAGIC = byteArrayOf(0x50, 0x4D, 0x54, 0x69, 0x6C, 0x65, 0x73) // "PMTiles"
+
+        private const val COMPRESSION_NONE = 1
+        private const val COMPRESSION_GZIP = 2
+        private const val COMPRESSION_BROTLI = 3
+        private const val COMPRESSION_ZSTD = 4
     }
 
     private var raf: RandomAccessFile? = null
-    private var rootDirOffset: Long = 0
-    private var rootDirLength: Long = 0
-    private var tileDataOffset: Long = 0
-    private var tileDataLength: Long = 0
-    private var leafDirOffset: Long = 0
-    private var leafDirLength: Long = 0
-    private var tileType: Int = 0
-    private var internalCompression: Int = 0
-    private var tileCompression: Int = 0
+    private var rootDirOffset = 0L
+    private var rootDirLength = 0L
+    private var leafDirOffset = 0L
+    private var tileDataOffset = 0L
+    private var internalCompression = 0
+    private var tileCompression = 0
+    private var tileType = 0
     private var isOpen = false
 
     val isValid: Boolean get() = isOpen
@@ -45,74 +49,50 @@ class PMTilesReader(private val file: File) {
         try {
             val r = RandomAccessFile(file, "r")
             raf = r
-
-            val header = ByteArray(HEADER_SIZE.toInt())
+            val header = ByteArray(HEADER_SIZE)
             r.readFully(header)
             val buf = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
 
-            val magic = buf.short.toInt() and 0xFFFF
-            if (magic != MAGIC) {
-                DebugLog.w(TAG) { "Not a PMTiles file (magic=0x${magic.toString(16)})" }
-                close()
-                return false
+            val magic = ByteArray(7).also { buf.get(it) }
+            if (!magic.contentEquals(MAGIC)) {
+                DebugLog.w(TAG) { "Not a PMTiles file (bad magic)" }
+                close(); return false
             }
-
-            val version = buf.get().toInt()
+            val version = buf.get().toInt()             // offset 7
             if (version != 3) {
                 DebugLog.w(TAG) { "Unsupported PMTiles version $version (need v3)" }
-                close()
-                return false
+                close(); return false
             }
 
-            rootDirOffset = buf.long
-            rootDirLength = buf.long
-            // Skip JSON metadata offset + length
-            buf.long; buf.long
-            leafDirOffset = buf.long
-            leafDirLength = buf.long
-            tileDataOffset = buf.long
-            tileDataLength = buf.long
-
-            // Addressed tiles count (8 bytes) — skip
-            buf.long
-
-            // Tile entries count (8 bytes) — skip
-            buf.long
-
-            // Tile contents count (8 bytes) — skip
-            buf.long
-
-            // Clustered flag (1 byte)
-            buf.get()
-
-            internalCompression = buf.get().toInt() and 0xFF
-            tileCompression = buf.get().toInt() and 0xFF
-            tileType = buf.get().toInt() and 0xFF
+            rootDirOffset = buf.long                     // 8
+            rootDirLength = buf.long                     // 16
+            buf.long; buf.long                           // 24/32 metadata (unused)
+            leafDirOffset = buf.long                     // 40
+            buf.long                                     // 48 leaf dir length (unused)
+            tileDataOffset = buf.long                    // 56
+            buf.long                                     // 64 tile data length (unused)
+            buf.long; buf.long; buf.long                 // 72/80/88 counts
+            buf.get()                                    // 96 clustered flag
+            internalCompression = buf.get().toInt() and 0xFF  // 97
+            tileCompression = buf.get().toInt() and 0xFF       // 98
+            tileType = buf.get().toInt() and 0xFF              // 99
 
             isOpen = true
             DebugLog.i(TAG) { "Opened ${file.name} — v$version, tileType=$tileType, tileCompress=$tileCompression" }
             return true
         } catch (e: Exception) {
             DebugLog.e(TAG, { "Failed to open PMTiles: ${e.message}" }, e)
-            close()
-            return false
+            close(); return false
         }
     }
 
     fun getTile(z: Int, x: Int, y: Int): ByteArray? {
-        val r = raf ?: return null
-        val tileId = zxyToTileId(z, x, y)
-
-        val entry = findTileEntry(tileId, rootDirOffset, rootDirLength)
-            ?: return null
-
+        raf ?: return null
+        if (!isOpen) return null
+        val tileId = PMTileId.zxyToTileId(z, x, y)
+        val entry = findTileEntry(tileId, rootDirOffset, rootDirLength, depth = 0) ?: return null
         return try {
-            val offset = tileDataOffset + entry.offset
-            val raw = ByteArray(entry.length.toInt())
-            synchronized(r) {
-                r.seek(offset)
-                r.readFully(raw)
-            }
+            val raw = readAt(tileDataOffset + entry.offset, entry.length.toInt())
             decompress(raw, tileCompression)
         } catch (e: Exception) {
             DebugLog.w(TAG) { "Failed to read tile z=$z x=$x y=$y: ${e.message}" }
@@ -128,69 +108,56 @@ class PMTilesReader(private val file: File) {
 
     private data class TileEntry(val tileId: Long, val offset: Long, val length: Long, val runLength: Long)
 
-    private fun findTileEntry(tileId: Long, dirOffset: Long, dirLength: Long): TileEntry? {
-        val r = raf ?: return null
-        val dirData = ByteArray(dirLength.toInt())
-        synchronized(r) {
-            r.seek(dirOffset)
-            r.readFully(dirData)
-        }
-        val decompressed = decompress(dirData, internalCompression)
-        val entries = parseDirectory(decompressed)
+    private fun findTileEntry(tileId: Long, dirOffset: Long, dirLength: Long, depth: Int): TileEntry? {
+        if (depth > 3) return null
+        val dirData = decompress(readAt(dirOffset, dirLength.toInt()), internalCompression)
+        val entries = parseDirectory(dirData)
+        val entry = findInEntries(entries, tileId) ?: return null
+        return if (entry.runLength == 0L) {
+            findTileEntry(tileId, leafDirOffset + entry.offset, entry.length, depth + 1)
+        } else entry
+    }
 
-        for (entry in entries) {
-            if (entry.runLength == 0L) {
-                // Leaf directory reference
-                if (tileId >= entry.tileId && tileId < entry.tileId + 1) {
-                    val leafOff = leafDirOffset + entry.offset
-                    return findTileEntry(tileId, leafOff, entry.length)
-                }
-            } else {
-                if (tileId >= entry.tileId && tileId < entry.tileId + entry.runLength) {
-                    val indexInRun = tileId - entry.tileId
-                    return if (entry.runLength == 1L) entry
-                    else entry.copy(offset = entry.offset + indexInRun * (entry.length / entry.runLength))
-                }
+    private fun findInEntries(entries: List<TileEntry>, tileId: Long): TileEntry? {
+        var lo = 0
+        var hi = entries.size - 1
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            val e = entries[mid]
+            when {
+                tileId < e.tileId -> hi = mid - 1
+                e.runLength != 0L && tileId >= e.tileId + e.runLength -> lo = mid + 1
+                else -> return e
             }
+        }
+        if (hi >= 0) {
+            val e = entries[hi]
+            if (e.runLength == 0L) return e
         }
         return null
     }
 
     private fun parseDirectory(data: ByteArray): List<TileEntry> {
         val buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-        val entries = ArrayList<TileEntry>()
-        val numEntries = readVarint(buf)
-
-        val tileIds = LongArray(numEntries.toInt())
-        var lastId = 0L
-        for (i in tileIds.indices) {
-            val delta = readVarint(buf)
-            lastId += delta
-            tileIds[i] = lastId
-        }
-
-        val runLengths = LongArray(numEntries.toInt())
-        for (i in runLengths.indices) {
-            runLengths[i] = readVarint(buf)
-        }
-
-        val lengths = LongArray(numEntries.toInt())
-        for (i in lengths.indices) {
-            lengths[i] = readVarint(buf)
-        }
-
-        val offsets = LongArray(numEntries.toInt())
-        var lastOffset = 0L
-        for (i in offsets.indices) {
+        val n = readVarint(buf).toInt()
+        val tileIds = LongArray(n)
+        var last = 0L
+        for (i in 0 until n) { last += readVarint(buf); tileIds[i] = last }
+        val runLengths = LongArray(n) { readVarint(buf) }
+        val lengths = LongArray(n) { readVarint(buf) }
+        val offsets = LongArray(n)
+        for (i in 0 until n) {
             val v = readVarint(buf)
-            offsets[i] = if (v == 0L && i > 0) lastOffset + lengths[i - 1] else v
-            lastOffset = offsets[i]
+            offsets[i] = if (v == 0L && i > 0) offsets[i - 1] + lengths[i - 1] else v - 1
         }
+        return List(n) { TileEntry(tileIds[it], offsets[it], lengths[it], runLengths[it]) }
+    }
 
-        for (i in 0 until numEntries.toInt()) {
-            entries.add(TileEntry(tileIds[i], offsets[i], lengths[i], runLengths[i]))
-        }
-        return entries
+    private fun readAt(offset: Long, len: Int): ByteArray {
+        val r = raf ?: throw IllegalStateException("closed")
+        val out = ByteArray(len)
+        synchronized(r) { r.seek(offset); r.readFully(out) }
+        return out
     }
 
     private fun readVarint(buf: ByteBuffer): Long {
@@ -206,48 +173,10 @@ class PMTilesReader(private val file: File) {
     }
 
     private fun decompress(data: ByteArray, compression: Int): ByteArray = when (compression) {
-        0 -> data // none
-        1 -> data // none
-        2 -> GZIPInputStream(data.inputStream()).readBytes() // gzip
-        3 -> InflaterInputStream(data.inputStream(), Inflater(true)).readBytes() // brotli fallback to raw deflate
+        COMPRESSION_NONE, 0 -> data
+        COMPRESSION_GZIP -> GZIPInputStream(data.inputStream()).use { it.readBytes() }
+        COMPRESSION_BROTLI, COMPRESSION_ZSTD ->
+            throw UnsupportedOperationException("PMTiles: compression id $compression not supported")
         else -> data
-    }
-
-    /**
-     * Convert z/x/y to a Hilbert tile ID (PMTiles v3 uses Hilbert curve ordering).
-     * TMS y-flip is applied: PMTiles uses TMS convention (y=0 at bottom).
-     */
-    private fun zxyToTileId(z: Int, x: Int, y: Int): Long {
-        if (z == 0) return 0L
-        val dim = 1 shl z
-        val tmsY = dim - 1 - y // flip for TMS
-        val base = (1L until z.toLong()).fold(0L) { acc, i -> acc + (1L shl (2 * i.toInt())) }
-        return base + xyToHilbert(x, tmsY, z)
-    }
-
-    private fun xyToHilbert(x: Int, y: Int, order: Int): Long {
-        var rx: Int
-        var ry: Int
-        var d = 0L
-        var cx = x
-        var cy = y
-        var s = order - 1
-        while (s >= 0) {
-            val n = 1 shl s
-            rx = if (cx and n != 0) 1 else 0
-            ry = if (cy and n != 0) 1 else 0
-            d += (s.toLong() * 2).let { (3L * rx.toLong()) xor ry.toLong() } shl (2 * s)
-
-            // Rotate
-            if (ry == 0) {
-                if (rx == 1) {
-                    cx = n - 1 - cx
-                    cy = n - 1 - cy
-                }
-                val temp = cx; cx = cy; cy = temp
-            }
-            s--
-        }
-        return d
     }
 }
