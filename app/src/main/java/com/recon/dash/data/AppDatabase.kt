@@ -12,8 +12,9 @@ class Converters {
 }
 
 @Database(
-    entities = [FavoritePlace::class, RideRecord::class, FuelFillup::class, ServiceItem::class],
-    version = 3,
+    entities = [FavoritePlace::class, RideRecord::class, FuelFillup::class, ServiceItem::class,
+        RouteDivergenceRecord::class],
+    version = 4,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -22,6 +23,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun rideRecordDao(): RideRecordDao
     abstract fun fuelFillupDao(): FuelFillupDao
     abstract fun serviceItemDao(): ServiceItemDao
+    abstract fun routeDivergenceDao(): RouteDivergenceDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null

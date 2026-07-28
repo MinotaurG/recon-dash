@@ -9,6 +9,7 @@ package com.recon.dash.util
  *   NAVROUTE — a route was computed / rerouted
  *   NAVRRT   — a reroute decision (fired or suppressed, with reason)
  *   NAVEVT   — lifecycle events (nav started/stopped, arrival)
+ *   NAVDIV   — a Google-vs-Valhalla divergence capture (attempt, skip-reason, or result)
  *
  * The formatting is pure (see [fixLine] etc.) so it's unit-testable; the emit methods just log.
  */
@@ -41,6 +42,25 @@ object NavLog {
     fun eventLine(event: String, detail: String = ""): String =
         "NAVEVT " + kv("evt" to event) + if (detail.isNotBlank()) " $detail" else ""
 
+    /**
+     * Divergence-capture trace. [outcome] is "captured" | "skip" | "no_google" | "error".
+     * On a captured line the metrics are filled; otherwise [reason] explains why nothing was saved.
+     */
+    fun divergenceLine(
+        ctx: String, outcome: String, reason: String = "",
+        overlapPct: Double? = null, deltaMeters: Double? = null, deltaSeconds: Double? = null,
+        valhallaMeters: Double? = null, googleMeters: Double? = null,
+    ): String {
+        val base = mutableListOf("ctx" to ctx, "outcome" to outcome)
+        if (reason.isNotBlank()) base.add("reason" to reason)
+        if (overlapPct != null) base.add("overlap" to fmt0(overlapPct * 100))
+        if (deltaMeters != null) base.add("dM" to fmt0(deltaMeters))
+        if (deltaSeconds != null) base.add("dS" to fmt0(deltaSeconds))
+        if (valhallaMeters != null) base.add("vM" to fmt0(valhallaMeters))
+        if (googleMeters != null) base.add("gM" to fmt0(googleMeters))
+        return "NAVDIV " + kv(*base.toTypedArray())
+    }
+
     // ── Emit helpers (DEBUG-gated via DebugLog) ──
 
     fun fix(
@@ -59,6 +79,14 @@ object NavLog {
 
     fun event(event: String, detail: String = "") =
         DebugLog.i(TAG) { eventLine(event, detail) }
+
+    fun divergence(
+        ctx: String, outcome: String, reason: String = "",
+        overlapPct: Double? = null, deltaMeters: Double? = null, deltaSeconds: Double? = null,
+        valhallaMeters: Double? = null, googleMeters: Double? = null,
+    ) = DebugLog.i(TAG) {
+        divergenceLine(ctx, outcome, reason, overlapPct, deltaMeters, deltaSeconds, valhallaMeters, googleMeters)
+    }
 
     // ── formatting internals ──
     private fun kv(vararg pairs: Pair<String, String>) = pairs.joinToString(" ") { "${it.first}=${it.second}" }

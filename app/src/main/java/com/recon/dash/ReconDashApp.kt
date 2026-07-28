@@ -2,6 +2,7 @@ package com.recon.dash
 
 import android.app.Application
 import com.recon.dash.dash.DashConfig
+import com.recon.dash.dash.nav.GoogleRoutesClient
 import com.recon.dash.search.PhotonClient
 import com.recon.dash.ui.theme.ThemeMode
 import com.recon.dash.ui.theme.ThemeState
@@ -19,5 +20,11 @@ class ReconDashApp : Application() {
 
         val placesKey = config.googlePlacesApiKey.ifBlank { BuildConfig.GOOGLE_PLACES_KEY }
         PhotonClient.googleApiKey = placesKey
+        // Same GCP key drives the debug-only Routes API divergence capture (release never calls it).
+        GoogleRoutesClient.apiKey = placesKey
+        DebugLog.i("ReconDashApp") {
+            "Google key ${if (placesKey.isNotBlank()) "present" else "MISSING"}; " +
+                "divergence capture ${if (BuildConfig.DEBUG && placesKey.isNotBlank()) "ARMED" else "off"}"
+        }
     }
 }

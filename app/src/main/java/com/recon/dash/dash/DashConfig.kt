@@ -74,6 +74,24 @@ class DashConfig private constructor(context: Context) {
         get() = prefs.getBoolean(KEY_PROJECT_IDLE, false)
         set(v) = prefs.edit().putBoolean(KEY_PROJECT_IDLE, v).apply()
 
+    /**
+     * Google Routes API monthly call counter (debug divergence capture only). Stored as
+     * "YYYY-MM:count"; reading in a new month resets to 0 so the free-tier budget rolls over
+     * automatically. [googleRoutesCallsThisMonth] returns the current count for [monthKey], and
+     * [recordGoogleRoutesCall] increments it. Caller supplies the month key (from a passed-in
+     * timestamp) so the logic stays testable and clock-free where it matters.
+     */
+    fun googleRoutesCallsThisMonth(monthKey: String): Int {
+        val raw = prefs.getString(KEY_GROUTES_MONTH, "") ?: ""
+        val parts = raw.split(":", limit = 2)
+        return if (parts.size == 2 && parts[0] == monthKey) parts[1].toIntOrNull() ?: 0 else 0
+    }
+
+    fun recordGoogleRoutesCall(monthKey: String) {
+        val current = googleRoutesCallsThisMonth(monthKey)
+        prefs.edit().putString(KEY_GROUTES_MONTH, "$monthKey:${current + 1}").apply()
+    }
+
     /** True until a specific dash has been identified — connect by prefix discovery. */
     val needsDiscovery: Boolean get() = ssid.isBlank()
 
@@ -135,6 +153,7 @@ class DashConfig private constructor(context: Context) {
         private const val KEY_SPEED_ALERT = "speed_alert_kmh"
         private const val KEY_GOOGLE_PLACES = "google_places_key"
         private const val KEY_PROJECT_IDLE = "project_when_idle"
+        private const val KEY_GROUTES_MONTH = "groutes_month_count"
         const val DEFAULT_PREFIX   = "RE_"
         const val DEFAULT_PASSWORD = "12345678"
 

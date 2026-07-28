@@ -54,4 +54,27 @@ class NavLogFormatTest {
         assertEquals("NAVEVT evt=nav_stop", NavLog.eventLine("nav_stop"))
         assertEquals("NAVEVT evt=nav_start dest=Home", NavLog.eventLine("nav_start", "dest=Home"))
     }
+
+    @Test
+    fun `divergence skip line carries reason and no metrics`() {
+        assertEquals("NAVDIV ctx=plan outcome=skip reason=noApiKey",
+            NavLog.divergenceLine("plan", outcome = "skip", reason = "noApiKey"))
+    }
+
+    @Test
+    fun `divergence captured line carries metrics`() {
+        val line = NavLog.divergenceLine(
+            "periodic", outcome = "captured",
+            overlapPct = 0.87, deltaMeters = -320.0, deltaSeconds = 45.0,
+            valhallaMeters = 13800.0, googleMeters = 14120.0,
+        )
+        assertTrue(line.startsWith("NAVDIV "))
+        assertTrue(line.contains("ctx=periodic"))
+        assertTrue(line.contains("outcome=captured"))
+        assertTrue(line.contains("overlap=87"))
+        assertTrue(line.contains("dM=-320"))
+        assertTrue(line.contains("dS=45"))
+        assertTrue(line.contains("vM=13800"))
+        assertTrue(line.contains("gM=14120"))
+    }
 }

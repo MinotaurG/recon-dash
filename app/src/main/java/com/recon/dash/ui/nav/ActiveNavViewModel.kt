@@ -39,6 +39,7 @@ class ActiveNavViewModel @Inject constructor(
     private val navSessionManager: NavSessionManager,
     private val rideRecorder: RideRecorder,
     private val dashConfig: DashConfig,
+    private val divergenceCapture: com.recon.dash.dash.nav.DivergenceCapture,
 ) : ViewModel() {
 
     companion object {
@@ -122,6 +123,7 @@ class ActiveNavViewModel @Inject constructor(
             }
 
             startLocationUpdates()
+            startDivergenceTicker()
         }
     }
 
@@ -154,6 +156,9 @@ class ActiveNavViewModel @Inject constructor(
                 val src = if (result.route.maneuvers.isNotEmpty()) "valhalla/osrm" else "unknown"
                 com.recon.dash.util.NavLog.route(src, r.totalMeters, r.maneuvers.size, reroute = isReroute)
                 DebugLog.i(TAG) { "Route computed — ${r.totalMeters.toInt()}m, ${r.maneuvers.size} maneuvers" }
+                // Debug-only: capture how this on-device route diverges from Google's, for offline
+                // costing analysis. Runs off the nav path and never blocks routing.
+                captureDivergence(r, from, if (isReroute) "reroute" else "plan")
             }
             is RouterResult.Failure -> {
                 _navState.value = NavDisplayState(
@@ -272,10 +277,42 @@ class ActiveNavViewModel @Inject constructor(
             (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(listener)
         }
         locationListener = null
+        divergenceTickJob?.cancel()
+        divergenceTickJob = null
         voiceManager?.resetTrip()
         navSessionManager.stopNavigation()
         viewModelScope.launch { rideRecorder.stop() }
         // navState already carries arrived=true; the screen shows the arrival summary card.
+    }
+
+    // ── Google divergence capture (debug-only tuning data) ──
+    private var divergenceTickJob: Job? = null
+
+    /** Fire a one-off divergence capture for [route] from [from]; swallows all failures. */
+    private fun captureDivergence(route: Route, from: GeoPoint, ctx: String) {
+        if (!divergenceCapture.enabled) return
+        viewModelScope.launch {
+            runCatching {
+                divergenceCapture.capture(route, from, GeoPoint(destLat, destLng), ctx, System.currentTimeMillis())
+            }.onFailure { DebugLog.w(TAG) { "Divergence capture ($ctx) threw: ${it.message}" } }
+        }
+    }
+
+    /** Periodic mid-ride divergence tick: compare the CURRENT Valhalla route from the rider's
+     *  live position to Google every PERIODIC_INTERVAL_MS. Debug-only; started with navigation. */
+    private fun startDivergenceTicker() {
+        if (!divergenceCapture.enabled) return
+        divergenceTickJob?.cancel()
+        divergenceTickJob = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(com.recon.dash.dash.nav.DivergenceCapture.PERIODIC_INTERVAL_MS)
+                val current = route ?: continue
+                val here = _riderPosition.value ?: getLastKnownLocation() ?: continue
+                runCatching {
+                    divergenceCapture.capture(current, here, GeoPoint(destLat, destLng), "periodic", System.currentTimeMillis())
+                }.onFailure { DebugLog.w(TAG) { "Periodic divergence threw: ${it.message}" } }
+            }
+        }
     }
 
     // ── Debounced, single-flight reroute (fixes the reroute storm) ──
@@ -321,6 +358,8 @@ class ActiveNavViewModel @Inject constructor(
 
     fun stopNavigation() {
         navTickJob?.cancel()
+        divergenceTickJob?.cancel()
+        divergenceTickJob = null
         locationListener?.let { listener ->
             val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
             lm.removeUpdates(listener)

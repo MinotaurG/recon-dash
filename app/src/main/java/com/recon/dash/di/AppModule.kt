@@ -6,6 +6,7 @@ import com.recon.dash.data.AppDatabase
 import com.recon.dash.data.FavoritePlaceDao
 import com.recon.dash.data.FuelFillupDao
 import com.recon.dash.data.RideRecordDao
+import com.recon.dash.data.RouteDivergenceDao
 import com.recon.dash.data.ServiceItemDao
 import dagger.Module
 import dagger.Provides
@@ -42,4 +43,8 @@ object AppModule {
     @Provides
     fun provideServiceItemDao(db: AppDatabase): ServiceItemDao =
         db.serviceItemDao()
+
+    @Provides
+    fun provideRouteDivergenceDao(db: AppDatabase): RouteDivergenceDao =
+        db.routeDivergenceDao()
 }
