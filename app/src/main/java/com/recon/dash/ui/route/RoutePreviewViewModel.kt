@@ -111,23 +111,23 @@ class RoutePreviewViewModel @Inject constructor(
             val from = GeoPoint(originLat, originLng)
             val to = GeoPoint(destLat, destLng)
 
-            val result = if (router.graphExists()) {
-                val loadResult = router.load()
-                if (loadResult.isFailure) {
-                    usedOnlineRouting = true
-                    routeOnline(from, to)
-                } else {
-                    usedOnlineRouting = false
-                    val options = RouteOptions(
-                        avoidTolls = avoidTolls,
-                        avoidHighways = avoidHighways,
-                        alternativeRoutes = true,
-                    )
-                    router.route(from, to, options)
-                }
-            } else {
+            // Try offline (Valhalla) first when a graph is loadable, then ALWAYS fall back to
+            // online (OSRM) before giving up — a missing/other-region extract must not block a
+            // route when the network is available.
+            var result: RouterResult = RouterResult.Failure(
+                com.recon.dash.dash.nav.RouterError.GraphNotLoaded("not attempted")
+            )
+            if (router.graphExists() && router.load().isSuccess) {
+                usedOnlineRouting = false
+                result = router.route(
+                    from, to,
+                    RouteOptions(avoidTolls = avoidTolls, avoidHighways = avoidHighways, alternativeRoutes = true),
+                )
+            }
+            if (result is RouterResult.Failure) {
+                // Offline unavailable or failed (e.g. outside the loaded extract) — try the network.
                 usedOnlineRouting = true
-                routeOnline(from, to)
+                result = routeOnline(from, to)
             }
 
             when (result) {
@@ -138,9 +138,8 @@ class RoutePreviewViewModel @Inject constructor(
                 }
                 is RouterResult.Failure -> {
                     allRoutes = emptyList()
-                    // If the origin is in a region we don't have installed, the failure is almost
-                    // certainly "outside the loaded extract" (Valhalla code 171 / no edges). Offer
-                    // to download that region instead of a dead-end retry.
+                    // Both offline AND online failed. If the origin is in a region we don't have
+                    // installed, offer to download it (the durable offline fix); otherwise a plain error.
                     val region = regionManager.regionForLocation(originLat, originLng)
                     if (region != null && region.id != regionManager.installedRegionId()) {
                         _state.value = RoutePreviewState.RegionMissing(

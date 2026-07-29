@@ -219,6 +219,7 @@ class RegionManager @Inject constructor(
 
     fun clearGraph() {
         valhallaDir.deleteRecursively()
+        prefs.edit().remove("installed_region_id").apply()
         _downloadState.value = DownloadState.Idle
     }
 }

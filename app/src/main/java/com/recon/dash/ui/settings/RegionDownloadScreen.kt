@@ -37,6 +37,7 @@ fun RegionDownloadScreen(
     val regions = viewModel.regions
     val downloadState by viewModel.downloadState.collectAsStateWithLifecycle()
     val installed by viewModel.installed.collectAsStateWithLifecycle()
+    val installedRegionId by viewModel.installedRegionId.collectAsStateWithLifecycle()
     val suggestedId by viewModel.suggestedRegionId.collectAsStateWithLifecycle()
 
     Column(
@@ -132,7 +133,7 @@ fun RegionDownloadScreen(
                     isDownloading = downloadState is DownloadState.Downloading,
                     isSuggested = region.id == suggestedId,
                     hasUrl = region.graphUrl.isNotBlank(),
-                    isInstalled = installed && region.graphUrl.isNotBlank(),
+                    isInstalled = installedRegionId == region.id,
                     onDownload = { viewModel.download(region) },
                 )
             }

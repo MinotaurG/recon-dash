@@ -25,6 +25,11 @@ class RegionDownloadViewModel @Inject constructor(
     private val _installed = MutableStateFlow(regionManager.isGraphInstalled())
     val installed = _installed.asStateFlow()
 
+    // WHICH region is installed (only one graph fits at a time). Used for per-region "Installed"
+    // status — the old code marked every region installed once ANY graph was present.
+    private val _installedRegionId = MutableStateFlow(regionManager.installedRegionId())
+    val installedRegionId = _installedRegionId.asStateFlow()
+
     private val _suggestedRegionId = MutableStateFlow<String?>(null)
     val suggestedRegionId = _suggestedRegionId.asStateFlow()
 
@@ -41,12 +46,14 @@ class RegionDownloadViewModel @Inject constructor(
         viewModelScope.launch {
             regionManager.downloadRegion(region, region.graphUrl)
             _installed.value = regionManager.isGraphInstalled()
+            _installedRegionId.value = regionManager.installedRegionId()
         }
     }
 
     fun clearGraph() {
         regionManager.clearGraph()
         _installed.value = false
+        _installedRegionId.value = null
     }
 
     private fun detectSuggestedRegion() {
