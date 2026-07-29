@@ -33,7 +33,15 @@ class RegionDownloadViewModel @Inject constructor(
     private val _suggestedRegionId = MutableStateFlow<String?>(null)
     val suggestedRegionId = _suggestedRegionId.asStateFlow()
 
+    // On-disk size of the installed maps (MB), for the "free up space" UI.
+    private val _installedSizeMb = MutableStateFlow(regionManager.installedSizeMb())
+    val installedSizeMb = _installedSizeMb.asStateFlow()
+
     val regions: List<Region> get() = regionManager.availableRegions
+
+    /** Display name of the installed bundle, or null. */
+    val installedRegionName: String?
+        get() = _installedRegionId.value?.let { id -> regions.firstOrNull { it.id == id }?.name }
 
     init {
         detectSuggestedRegion()
@@ -47,6 +55,7 @@ class RegionDownloadViewModel @Inject constructor(
             regionManager.downloadRegion(region, region.graphUrl)
             _installed.value = regionManager.isGraphInstalled()
             _installedRegionId.value = regionManager.installedRegionId()
+            _installedSizeMb.value = regionManager.installedSizeMb()
         }
     }
 
@@ -54,6 +63,7 @@ class RegionDownloadViewModel @Inject constructor(
         regionManager.clearGraph()
         _installed.value = false
         _installedRegionId.value = null
+        _installedSizeMb.value = 0
     }
 
     private fun detectSuggestedRegion() {

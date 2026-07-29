@@ -69,7 +69,7 @@ class RegionManager @Inject constructor(
         Region("west", "West India (MH, GJ, GA, MP)",
             graphUrl = "${BASE_URL}west/valhalla_tiles.tar",
             tilesUrl = "${BASE_URL}west/tiles.pmtiles",
-            graphSizeMb = 0, tilesSizeMb = 0),   // sizes filled after build
+            graphSizeMb = 1536, tilesSizeMb = 822),
         Region("south", "South India (KA, KL, TN, TG, AP)",
             graphUrl = "${BASE_URL}south/valhalla_tiles.tar",
             tilesUrl = "${BASE_URL}south/tiles.pmtiles",
@@ -123,9 +123,15 @@ class RegionManager @Inject constructor(
     fun isGraphInstalled(): Boolean =
         tilesFile.exists() && tilesFile.length() > 0
 
+    private val pmtilesFile: File
+        get() = File(File(context.filesDir, "pmtiles"), "region.pmtiles")
+
+    /** On-disk size of everything an installed region occupies (routing graph + map tiles), in MB. */
     fun installedSizeMb(): Int {
-        if (!tilesFile.exists()) return 0
-        return (tilesFile.length() / (1024 * 1024)).toInt()
+        var bytes = 0L
+        if (tilesFile.exists()) bytes += tilesFile.length()
+        if (pmtilesFile.exists()) bytes += pmtilesFile.length()
+        return (bytes / (1024 * 1024)).toInt()
     }
 
     suspend fun downloadRegion(region: Region, url: String): Result<Unit> = withContext(Dispatchers.IO) {
@@ -193,8 +199,10 @@ class RegionManager @Inject constructor(
         conn.disconnect()
     }
 
+    /** Delete ALL installed offline data (routing graph + map tiles) to free device space. */
     fun clearGraph() {
         valhallaDir.deleteRecursively()
+        pmtilesFile.parentFile?.deleteRecursively()   // also drop the ~hundreds-of-MB pmtiles
         prefs.edit().remove("installed_region_id").apply()
         _downloadState.value = DownloadState.Idle
     }

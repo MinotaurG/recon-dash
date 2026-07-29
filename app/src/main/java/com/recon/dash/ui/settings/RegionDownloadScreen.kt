@@ -12,6 +12,9 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +41,7 @@ fun RegionDownloadScreen(
     val downloadState by viewModel.downloadState.collectAsStateWithLifecycle()
     val installed by viewModel.installed.collectAsStateWithLifecycle()
     val installedRegionId by viewModel.installedRegionId.collectAsStateWithLifecycle()
+    val installedSizeMb by viewModel.installedSizeMb.collectAsStateWithLifecycle()
     val suggestedId by viewModel.suggestedRegionId.collectAsStateWithLifecycle()
 
     Column(
@@ -92,6 +96,9 @@ fun RegionDownloadScreen(
         }
 
         if (installed) {
+            var showDeleteConfirm by remember { mutableStateOf(false) }
+            val name = viewModel.installedRegionName ?: "Offline maps"
+            val sizeMb = installedSizeMb
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -101,15 +108,47 @@ fun RegionDownloadScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = "Graph installed", color = Color(0xFF10B981), fontSize = 13.sp)
+                Column {
+                    Text(text = name, color = Color(0xFF10B981), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        text = if (sizeMb >= 1024) "%.1f GB on device".format(sizeMb / 1024f)
+                               else "$sizeMb MB on device",
+                        color = OnSurface.copy(alpha = 0.5f),
+                        fontSize = 12.sp,
+                    )
+                }
                 Text(
-                    text = "Clear",
-                    color = Color(0xFFEF4444).copy(alpha = 0.7f),
-                    fontSize = 12.sp,
-                    modifier = Modifier.clickable { viewModel.clearGraph() },
+                    text = "Delete",
+                    color = Color(0xFFEF4444),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable { showDeleteConfirm = true },
                 )
             }
             Spacer(Modifier.height(16.dp))
+
+            if (showDeleteConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showDeleteConfirm = false },
+                    title = { Text("Delete offline maps?") },
+                    text = {
+                        Text(
+                            "This removes $name (" +
+                                (if (sizeMb >= 1024) "%.1f GB".format(sizeMb / 1024f) else "$sizeMb MB") +
+                                ") from this device. You can download it again anytime. " +
+                                "Navigation will fall back to online routing until then."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { viewModel.clearGraph(); showDeleteConfirm = false }) {
+                            Text("Delete", color = Color(0xFFEF4444))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                    },
+                )
+            }
         }
 
         Text(
