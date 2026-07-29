@@ -57,54 +57,54 @@ class RegionManager @Inject constructor(
     fun installedRegionId(): String? =
         if (isGraphInstalled()) prefs.getString("installed_region_id", null) else null
 
+    /**
+     * Offline units are ZONAL BUNDLES, not single states. A bundle covers several states so a
+     * rider routes seamlessly across the states they'd actually cross (Mumbai->Goa, Hyderabad->
+     * Bangalore) without the single-state-tile problem where one download overwrote another and
+     * cross-border routes broke. Only one bundle is installed at a time (see installedRegionId).
+     *
+     * URLs are set once a zone's tiles are built + uploaded to R2 (empty = "Coming soon").
+     */
     val availableRegions: List<Region> = listOf(
-        // South
-        Region("karnataka", "Karnataka", "", "", graphSizeMb = 80, tilesSizeMb = 60),
-        Region("tamil_nadu", "Tamil Nadu", "", "", graphSizeMb = 90, tilesSizeMb = 70),
-        Region("kerala", "Kerala", "", "", graphSizeMb = 45, tilesSizeMb = 35),
-        Region("andhra_pradesh", "Andhra Pradesh", "", "", graphSizeMb = 100, tilesSizeMb = 75),
-        Region("telangana", "Telangana",
-            graphUrl = "${BASE_URL}telangana/valhalla_tiles.tar",
-            tilesUrl = "${BASE_URL}telangana/tiles.pmtiles",
-            graphSizeMb = 299, tilesSizeMb = 132),
-        // West
-        Region("maharashtra", "Maharashtra",
-            graphUrl = "${BASE_URL}maharashtra/valhalla_tiles.tar",
-            tilesUrl = "${BASE_URL}maharashtra/tiles.pmtiles",
-            graphSizeMb = 759, tilesSizeMb = 381),
-        Region("goa", "Goa", "", "", graphSizeMb = 15, tilesSizeMb = 10),
-        Region("gujarat", "Gujarat", "", "", graphSizeMb = 130, tilesSizeMb = 95),
-        Region("rajasthan", "Rajasthan", "", "", graphSizeMb = 120, tilesSizeMb = 90),
-        // North
-        Region("delhi_ncr", "Delhi NCR", "", "", graphSizeMb = 35, tilesSizeMb = 25),
-        Region("uttar_pradesh", "Uttar Pradesh", "", "", graphSizeMb = 200, tilesSizeMb = 150),
-        Region("madhya_pradesh", "Madhya Pradesh", "", "", graphSizeMb = 140, tilesSizeMb = 100),
-        Region("punjab", "Punjab", "", "", graphSizeMb = 50, tilesSizeMb = 38),
-        Region("haryana", "Haryana", "", "", graphSizeMb = 45, tilesSizeMb = 32),
-        Region("himachal", "Himachal Pradesh", "", "", graphSizeMb = 50, tilesSizeMb = 40),
-        Region("uttarakhand", "Uttarakhand", "", "", graphSizeMb = 55, tilesSizeMb = 45),
-        Region("jammu_kashmir", "Jammu & Kashmir", "", "", graphSizeMb = 45, tilesSizeMb = 35),
-        Region("ladakh", "Ladakh", "", "", graphSizeMb = 20, tilesSizeMb = 15),
-        // East
-        Region("west_bengal", "West Bengal", "", "", graphSizeMb = 85, tilesSizeMb = 60),
-        Region("odisha", "Odisha", "", "", graphSizeMb = 75, tilesSizeMb = 55),
-        Region("bihar", "Bihar", "", "", graphSizeMb = 80, tilesSizeMb = 58),
-        Region("jharkhand", "Jharkhand", "", "", graphSizeMb = 55, tilesSizeMb = 40),
-        Region("chhattisgarh", "Chhattisgarh", "", "", graphSizeMb = 60, tilesSizeMb = 45),
-        // Northeast
-        Region("assam", "Assam", "", "", graphSizeMb = 45, tilesSizeMb = 32),
-        Region("sikkim", "Sikkim", "", "", graphSizeMb = 12, tilesSizeMb = 8),
-        Region("meghalaya", "Meghalaya", "", "", graphSizeMb = 18, tilesSizeMb = 12),
-        Region("arunachal", "Arunachal Pradesh", "", "", graphSizeMb = 25, tilesSizeMb = 18),
-        Region("nagaland", "Nagaland", "", "", graphSizeMb = 14, tilesSizeMb = 10),
-        Region("manipur", "Manipur", "", "", graphSizeMb = 15, tilesSizeMb = 10),
-        Region("mizoram", "Mizoram", "", "", graphSizeMb = 12, tilesSizeMb = 8),
-        Region("tripura", "Tripura", "", "", graphSizeMb = 10, tilesSizeMb = 7),
-        // UTs
-        Region("chandigarh", "Chandigarh", "", "", graphSizeMb = 5, tilesSizeMb = 3),
-        Region("puducherry", "Puducherry", "", "", graphSizeMb = 4, tilesSizeMb = 3),
-        Region("andaman", "Andaman & Nicobar", "", "", graphSizeMb = 6, tilesSizeMb = 4),
+        Region("west", "West India (MH, GJ, GA, MP)",
+            graphUrl = "${BASE_URL}west/valhalla_tiles.tar",
+            tilesUrl = "${BASE_URL}west/tiles.pmtiles",
+            graphSizeMb = 0, tilesSizeMb = 0),   // sizes filled after build
+        Region("south", "South India (KA, KL, TN, TG, AP)",
+            graphUrl = "${BASE_URL}south/valhalla_tiles.tar",
+            tilesUrl = "${BASE_URL}south/tiles.pmtiles",
+            graphSizeMb = 0, tilesSizeMb = 0),
+        Region("north", "North India (DL, PB, HR, RJ, UP, UK, HP)", "", "", graphSizeMb = 0),
+        Region("east", "East India (WB, OD, BR, JH, CG)", "", "", graphSizeMb = 0),
+        Region("northeast", "Northeast India (AS + 7 sisters)", "", "", graphSizeMb = 0),
     )
+
+    /**
+     * State id (from [RegionGeocoder]) -> zonal bundle id. This is what turns a GPS fix into the
+     * bundle to download. Kept exhaustive so every geocodable state maps to a zone.
+     */
+    private val stateToZone: Map<String, String> = mapOf(
+        // West
+        "maharashtra" to "west", "goa" to "west", "gujarat" to "west", "madhya_pradesh" to "west",
+        // South
+        "karnataka" to "south", "kerala" to "south", "tamil_nadu" to "south",
+        "telangana" to "south", "andhra_pradesh" to "south",
+        // North
+        "delhi_ncr" to "north", "punjab" to "north", "haryana" to "north", "rajasthan" to "north",
+        "uttar_pradesh" to "north", "uttarakhand" to "north", "himachal" to "north",
+        "jammu_kashmir" to "north", "ladakh" to "north",
+        // East
+        "west_bengal" to "east", "odisha" to "east", "bihar" to "east",
+        "jharkhand" to "east", "chhattisgarh" to "east",
+        // Northeast
+        "assam" to "northeast", "sikkim" to "northeast", "meghalaya" to "northeast",
+        "arunachal" to "northeast", "nagaland" to "northeast",
+        "manipur" to "northeast", "mizoram" to "northeast", "tripura" to "northeast",
+    )
+
+    /** The zonal bundle covering a given state id, or null if that state isn't in any zone. */
+    fun zoneForState(stateId: String): Region? =
+        stateToZone[stateId]?.let { zid -> availableRegions.firstOrNull { it.id == zid } }
 
     /**
      * State lookup by coordinate (point-in-polygon via [RegionGeocoder]) — used to suggest which
@@ -112,8 +112,9 @@ class RegionManager @Inject constructor(
      * Returns null outside covered India / on load failure.
      */
     fun regionForLocation(lat: Double, lng: Double): Region? {
-        val id = geocoder.regionIdForLocation(lat, lng) ?: return null
-        return availableRegions.firstOrNull { it.id == id }
+        val stateId = geocoder.regionIdForLocation(lat, lng) ?: return null
+        // Map the state the rider is in to its zonal bundle (the actual downloadable unit).
+        return zoneForState(stateId)
     }
 
     /** True when a region has real download URLs (i.e. its tiles are built + hosted). */
