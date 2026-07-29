@@ -20,7 +20,7 @@ class RouterParseTripTest {
         "shape": "$shape",
         "maneuvers": [
           { "type": 1, "instruction": "Depart", "begin_shape_index": 0, "length": 0.0 },
-          { "type": 15, "verbal_pre_transition_instruction": "Turn left", "begin_shape_index": 1, "length": 0.111 },
+          { "type": 15, "verbal_pre_transition_instruction": "Turn left", "begin_shape_index": 1, "length": 0.111, "street_names": ["ISB Road", "NH-65"] },
           { "type": 4, "instruction": "Arrive", "begin_shape_index": 2, "length": 0.0 }
         ]
       } ],
@@ -66,5 +66,23 @@ class RouterParseTripTest {
             com.recon.dash.dash.nav.ManeuverType.TURN_LEFT,
             route.maneuvers.first { it.instruction == "Turn left" }.type,
         )
+    }
+
+    @Test
+    fun `street_names parses the first name onto the maneuver`() {
+        val route = ValhallaTripParser.parse(trip()).first()
+        val turn = route.maneuvers.first { it.instruction == "Turn left" }
+        assertEquals("ISB Road", turn.streetName)
+        // Maneuvers with no street_names stay empty (not null / not crashing).
+        assertEquals("", route.maneuvers.first { it.instruction == "Depart" }.streetName)
+    }
+
+    @Test
+    fun `NavEngine surfaces the current street after passing a named maneuver`() {
+        val route = ValhallaTripParser.parse(trip()).first()
+        val eng = com.recon.dash.dash.nav.NavEngine(route)
+        // Sit just past the turn (vertex 1) so the "ISB Road" maneuver is now behind us.
+        val p = eng.update(route.geometry[1], speedMps = 10f, accuracyM = 5f)
+        assertEquals("ISB Road", p.currentStreet)
     }
 }

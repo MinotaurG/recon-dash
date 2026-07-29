@@ -46,6 +46,7 @@ sealed class RoutePreviewState {
 class RoutePreviewViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val savedStateHandle: SavedStateHandle,
+    private val router: Router,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<RoutePreviewState>(RoutePreviewState.Loading)
@@ -53,8 +54,6 @@ class RoutePreviewViewModel @Inject constructor(
 
     private val _selectedGeometry = MutableStateFlow<List<com.recon.dash.dash.nav.GeoPoint>>(emptyList())
     val selectedGeometry = _selectedGeometry.asStateFlow()
-
-    private val router = Router(context)
 
     private val destName: String = savedStateHandle.get<String>("destName") ?: "Destination"
     val destLat: Double = savedStateHandle.get<String>("destLat")?.toDoubleOrNull() ?: 0.0
@@ -172,10 +171,7 @@ class RoutePreviewViewModel @Inject constructor(
         )
     }
 
-    override fun onCleared() {
-        router.release()
-        super.onCleared()
-    }
+    // Router is a process-lifetime singleton now; do NOT release it on VM teardown.
 
     private fun formatDistance(meters: Double): String = when {
         meters >= 1000 -> "%.1f km".format(meters / 1000.0)

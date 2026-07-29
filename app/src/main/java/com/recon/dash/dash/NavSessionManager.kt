@@ -34,6 +34,7 @@ data class NavProgress(
     val offRoute: Boolean,
     val arrived: Boolean,
     val snapDistanceM: Double,
+    val currentStreet: String,
 )
 
 /**
@@ -114,6 +115,7 @@ class NavSessionManager @Inject constructor() {
             offRoute = offRoute,
             arrived = p.arrived,
             snapDistanceM = p.snapDistanceM,
+            currentStreet = p.currentStreet,
         )
         _progress.value = snapshot
         NavLog.fix(

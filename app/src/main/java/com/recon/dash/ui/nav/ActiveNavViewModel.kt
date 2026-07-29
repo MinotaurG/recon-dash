@@ -27,6 +27,7 @@ data class NavDisplayState(
     val distToTurnText: String = "",
     val nextInstruction: String? = null,
     val destinationName: String = "",
+    val currentStreet: String = "",
     val arrived: Boolean = false,
     val offRoute: Boolean = false,
     val speedAlertActive: Boolean = false,
@@ -40,6 +41,8 @@ class ActiveNavViewModel @Inject constructor(
     private val rideRecorder: RideRecorder,
     private val dashConfig: DashConfig,
     private val divergenceCapture: com.recon.dash.dash.nav.DivergenceCapture,
+    private val router: Router,
+    @com.recon.dash.di.ApplicationScope private val appScope: kotlinx.coroutines.CoroutineScope,
 ) : ViewModel() {
 
     companion object {
@@ -74,7 +77,6 @@ class ActiveNavViewModel @Inject constructor(
         savedStateHandle.get<String>("destLng")?.toDoubleOrNull() ?: 0.0,
     )
 
-    private val router = Router(context)
     private var route: Route? = null
     private var voiceManager: VoiceManager? = null
     private var locationListener: LocationListener? = null
@@ -244,6 +246,7 @@ class ActiveNavViewModel @Inject constructor(
             distToTurnText = formatDistance(progress.distanceToManeuverM),
             nextInstruction = progress.nextManeuver?.instruction,
             destinationName = destName,
+            currentStreet = progress.currentStreet,
             arrived = progress.arrived,
             offRoute = progress.offRoute,
             speedAlertActive = alertActive,
@@ -281,7 +284,9 @@ class ActiveNavViewModel @Inject constructor(
         divergenceTickJob = null
         voiceManager?.resetTrip()
         navSessionManager.stopNavigation()
-        viewModelScope.launch { rideRecorder.stop() }
+        // Save on the app scope, NOT viewModelScope: the nav screen often finishes right after
+        // arrival, cancelling viewModelScope before the DB insert runs and silently losing the ride.
+        appScope.launch { rideRecorder.stop() }
         // navState already carries arrived=true; the screen shows the arrival summary card.
     }
 
@@ -367,8 +372,10 @@ class ActiveNavViewModel @Inject constructor(
         locationListener = null
         voiceManager?.resetTrip()
         navSessionManager.stopNavigation()
-        viewModelScope.launch { rideRecorder.stop() }
-        router.release()
+        // App scope, not viewModelScope: stopNavigation() is often called from onCleared(), where
+        // viewModelScope is already cancelled — the ride save must outlive the ViewModel.
+        appScope.launch { rideRecorder.stop() }
+        // Router is a process-lifetime singleton now; do NOT release it here.
     }
 
     override fun onCleared() {

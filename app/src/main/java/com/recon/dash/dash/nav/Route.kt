@@ -43,6 +43,8 @@ data class Maneuver(
     val roundaboutExitCount: Int = 0,
     /** Valhalla's own maneuver length (m); kept for logging/diagnostics only, not for distances. */
     val valhallaLengthM: Double = 0.0,
+    /** Name of the road this maneuver travels along (Valhalla street_names); empty if unnamed. */
+    val streetName: String = "",
 ) {
     /** Dash maneuver glyph byte. CONTINUE (0x0B) is the only verified value. */
     val dashCode: Int get() = 0x0B // TODO: verify other glyph codes on fw 11.63

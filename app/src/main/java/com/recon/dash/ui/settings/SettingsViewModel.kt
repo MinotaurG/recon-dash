@@ -28,6 +28,7 @@ class SettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val config: DashConfig,
     private val favoriteRepo: FavoriteRepository,
+    private val router: Router,
 ) : ViewModel() {
 
     private val _ssid = MutableStateFlow(config.ssid)
@@ -65,7 +66,6 @@ class SettingsViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    private val router = Router(context)
     val hasGraph: Boolean = router.graphExists()
 
     val tileCacheSize: String = computeTileCacheSize()

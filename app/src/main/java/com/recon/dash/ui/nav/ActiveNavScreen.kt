@@ -120,6 +120,13 @@ fun ActiveNavScreen(
                                 color = OnSurface,
                                 fontSize = 14.sp,
                             )
+                            if (navState.currentStreet.isNotBlank()) {
+                                Text(
+                                    text = "On ${navState.currentStreet}",
+                                    color = OnSurface.copy(alpha = 0.55f),
+                                    fontSize = 12.sp,
+                                )
+                            }
                         } else {
                             Text(
                                 text = navState.destinationName,

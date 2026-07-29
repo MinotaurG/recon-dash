@@ -5,9 +5,12 @@ import com.recon.dash.util.DebugLog
 import com.valhalla.valhalla.ValhallaConfig
 import com.valhalla.valhalla.ValhallaKotlin
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.File
 
@@ -45,6 +48,7 @@ class Router(private val context: Context) {
         private const val TAG = "Router"
         private const val TILES_DIR_NAME = "valhalla"
         private const val TILES_FILE_NAME = "valhalla_tiles.tar"
+        private const val ROUTE_TIMEOUT_MS = 8_000L
     }
 
     private var engine: ValhallaKotlin? = null
@@ -99,7 +103,20 @@ class Router(private val context: Context) {
 
         try {
             val requestJson = buildRequest(from, to, options)
-            val rawResponse = eng.route(requestJson, cfg)
+            // The native route() call is blocking and cannot be interrupted. We run it in a child
+            // coroutine and abandon it via withTimeoutOrNull: the caller is freed after the timeout
+            // (no request pile-up), though the orphaned native thread runs to completion in the
+            // background. ROUTE_TIMEOUT_MS is generous — on-device Valhalla is normally sub-second.
+            val rawResponse = coroutineScope {
+                val deferred = async(Dispatchers.IO) { eng.route(requestJson, cfg) }
+                withTimeoutOrNull(ROUTE_TIMEOUT_MS) { deferred.await() }
+            }
+            if (rawResponse == null) {
+                DebugLog.w(TAG) { "Routing timed out after ${ROUTE_TIMEOUT_MS}ms" }
+                return@withContext RouterResult.Failure(
+                    RouterError.RoutingFailed(RuntimeException("route timeout"))
+                )
+            }
             val routes = parseResponse(rawResponse)
             if (routes.isEmpty()) {
                 DebugLog.w(TAG) { "No route in response: ${rawResponse.take(200)}" }
@@ -174,7 +191,8 @@ internal object ValhallaTripParser {
         // was the root cause of wrong turn-by-turn distances. We assign cumulativeMeters from
         // the haversine cumulative[] array (built below) via the maneuver's shape index.
         data class RawManeuver(val type: ManeuverType, val instruction: String,
-                               val beginIdx: Int, val exitCount: Int, val valhallaLengthM: Double)
+                               val beginIdx: Int, val exitCount: Int, val valhallaLengthM: Double,
+                               val streetName: String)
         val raw = ArrayList<RawManeuver>()
 
         for (li in 0 until legs.length()) {
@@ -199,7 +217,11 @@ internal object ValhallaTripParser {
                         .ifBlank { m.optString("instruction", "") }
                     val exitCount = m.optInt("roundabout_exit_count", 0)
                     val lengthM = m.optDouble("length", 0.0) * 1000.0
-                    raw.add(RawManeuver(type, instruction, beginIdx, exitCount, lengthM))
+                    // street_names is an array of road names for the segment this maneuver travels.
+                    val streetName = m.optJSONArray("street_names")?.let { arr ->
+                        if (arr.length() > 0) arr.optString(0, "") else ""
+                    } ?: ""
+                    raw.add(RawManeuver(type, instruction, beginIdx, exitCount, lengthM, streetName))
                 }
             }
         }
@@ -222,6 +244,7 @@ internal object ValhallaTripParser {
                 cumulativeMeters = cumulative[rm.beginIdx.coerceIn(0, cumulative.size - 1)],
                 roundaboutExitCount = rm.exitCount,
                 valhallaLengthM = rm.valhallaLengthM,
+                streetName = rm.streetName,
             )
         }
 

@@ -33,6 +33,7 @@ class NavEngine(private val route: Route) {
         val offRoute: Boolean,
         val arrived: Boolean,
         val snapDistanceM: Double,        // perpendicular distance GPS→route (for logging/UI)
+        val currentStreet: String,        // name of the road the rider is currently on ("" if unknown)
     )
 
     companion object {
@@ -78,7 +79,7 @@ class NavEngine(private val route: Route) {
         if (geom.size < 2) {
             // Degenerate route — should never happen (Router guards), but never throw in nav.
             val only = geom.firstOrNull() ?: pos
-            return Progress(only, 0, 0.0, 0.0, 0.0, 0.0, null, 0.0, offRoute = false, arrived = false, snapDistanceM = 0.0)
+            return Progress(only, 0, 0.0, 0.0, 0.0, 0.0, null, 0.0, offRoute = false, arrived = false, snapDistanceM = 0.0, currentStreet = "")
         }
 
         // 1. Snap within a forward window around the cursor; re-acquire globally if far off.
@@ -134,6 +135,12 @@ class NavEngine(private val route: Route) {
         }
         val distToManeuver = next?.let { (it.cumulativeMeters - traveled).coerceAtLeast(0.0) } ?: remaining
 
+        // Current street = the road the rider is on NOW: the last maneuver at or before the snap
+        // that has a name. (The maneuver's street_names describe the segment it travels along.)
+        val currentStreet = route.maneuvers
+            .lastOrNull { it.cumulativeMeters <= traveled + 1.0 && it.streetName.isNotBlank() }
+            ?.streetName ?: ""
+
         // 5. Arrival requires TRUE destination proximity (not just remaining≈0, which a mis-snap
         //    near the end could fake).
         val destDist = route.destination?.let { GeoPoint.distMeters(pos, it) } ?: Double.MAX_VALUE
@@ -158,6 +165,7 @@ class NavEngine(private val route: Route) {
             offRoute = offRoute,
             arrived = arrived,
             snapDistanceM = best.dist,
+            currentStreet = currentStreet,
         )
     }
 
