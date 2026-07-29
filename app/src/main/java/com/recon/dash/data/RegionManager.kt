@@ -73,7 +73,7 @@ class RegionManager @Inject constructor(
         Region("south", "South India (KA, KL, TN, TG, AP)",
             graphUrl = "${BASE_URL}south/valhalla_tiles.tar",
             tilesUrl = "${BASE_URL}south/tiles.pmtiles",
-            graphSizeMb = 0, tilesSizeMb = 0),
+            graphSizeMb = 1434, tilesSizeMb = 719),
         Region("north", "North India (DL, PB, HR, RJ, UP, UK, HP)", "", "", graphSizeMb = 0),
         Region("east", "East India (WB, OD, BR, JH, CG)", "", "", graphSizeMb = 0),
         Region("northeast", "Northeast India (AS + 7 sisters)", "", "", graphSizeMb = 0),
