@@ -40,6 +40,16 @@ sealed class RoutePreviewState {
         val isOnlineRoute: Boolean = false,
     ) : RoutePreviewState()
     data class Error(val message: String) : RoutePreviewState()
+    /**
+     * Routing failed and the origin falls in a region whose map isn't installed — offer to download
+     * it right here instead of a dead-end "Retry". [available] is false for regions not yet hosted.
+     */
+    data class RegionMissing(
+        val regionId: String,
+        val regionName: String,
+        val sizeMb: Int,
+        val available: Boolean,
+    ) : RoutePreviewState()
 }
 
 @HiltViewModel
@@ -47,6 +57,7 @@ class RoutePreviewViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val savedStateHandle: SavedStateHandle,
     private val router: Router,
+    private val regionManager: com.recon.dash.data.RegionManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<RoutePreviewState>(RoutePreviewState.Loading)
@@ -127,12 +138,25 @@ class RoutePreviewViewModel @Inject constructor(
                 }
                 is RouterResult.Failure -> {
                     allRoutes = emptyList()
-                    val msg = when (val err = result.error) {
-                        is com.recon.dash.dash.nav.RouterError.GraphNotLoaded -> err.message
-                        is com.recon.dash.dash.nav.RouterError.NoRouteFound -> "No route found to destination"
-                        is com.recon.dash.dash.nav.RouterError.RoutingFailed -> "Routing error: ${err.cause.message}"
+                    // If the origin is in a region we don't have installed, the failure is almost
+                    // certainly "outside the loaded extract" (Valhalla code 171 / no edges). Offer
+                    // to download that region instead of a dead-end retry.
+                    val region = regionManager.regionForLocation(originLat, originLng)
+                    if (region != null && region.id != regionManager.installedRegionId()) {
+                        _state.value = RoutePreviewState.RegionMissing(
+                            regionId = region.id,
+                            regionName = region.name,
+                            sizeMb = region.totalSizeMb,
+                            available = regionManager.isRegionAvailable(region),
+                        )
+                    } else {
+                        val msg = when (val err = result.error) {
+                            is com.recon.dash.dash.nav.RouterError.GraphNotLoaded -> err.message
+                            is com.recon.dash.dash.nav.RouterError.NoRouteFound -> "No route found to destination"
+                            is com.recon.dash.dash.nav.RouterError.RoutingFailed -> "Routing error: ${err.cause.message}"
+                        }
+                        _state.value = RoutePreviewState.Error(msg)
                     }
-                    _state.value = RoutePreviewState.Error(msg)
                 }
             }
         }

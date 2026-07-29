@@ -85,6 +85,11 @@ fun RoutePreviewScreen(
                 )
                 is RoutePreviewState.Error -> ErrorCard(s.message, onRetry = { viewModel.retry() })
                 is RoutePreviewState.NoGraph -> NoGraphCard(onDownload = onDownloadRegion)
+                is RoutePreviewState.RegionMissing -> RegionMissingCard(
+                    state = s,
+                    onDownload = onDownloadRegion,
+                    onRetry = { viewModel.retry() },
+                )
             }
         }
     }
@@ -439,6 +444,56 @@ private fun NoGraphCard(onDownload: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             TextButton(onClick = onDownload) {
                 Text("Download Region", color = GoldAccent)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RegionMissingCard(
+    state: RoutePreviewState.RegionMissing,
+    onDownload: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                text = "${state.regionName} map not downloaded",
+                color = OnSurface,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = if (state.available) {
+                    "You're in ${state.regionName}, but its offline map isn't installed. " +
+                        "Download it (${state.sizeMb} MB) to route here."
+                } else {
+                    "You're in ${state.regionName}, but its offline map isn't available yet. " +
+                        "Routing here needs it installed."
+                },
+                color = OnSurface.copy(alpha = 0.6f),
+                fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (state.available) {
+                    Button(
+                        onClick = onDownload,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = GoldAccent, contentColor = Color.Black,
+                        ),
+                    ) {
+                        Text("Download ${state.regionName}", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                TextButton(onClick = onRetry) {
+                    Text("Retry", color = OnSurface.copy(alpha = 0.7f))
+                }
             }
         }
     }

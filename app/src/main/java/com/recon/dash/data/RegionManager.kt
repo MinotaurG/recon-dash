@@ -50,6 +50,12 @@ class RegionManager @Inject constructor(
     private val valhallaDir = File(context.filesDir, VALHALLA_DIR)
     private val tilesFile = File(valhallaDir, TILES_FILE)
 
+    private val prefs = context.getSharedPreferences("region_manager", Context.MODE_PRIVATE)
+
+    /** The region id whose tiles are currently installed, or null if none/unknown. */
+    fun installedRegionId(): String? =
+        if (isGraphInstalled()) prefs.getString("installed_region_id", null) else null
+
     val availableRegions: List<Region> = listOf(
         // South
         Region("karnataka", "Karnataka", "", "", graphSizeMb = 80, tilesSizeMb = 60),
@@ -61,7 +67,10 @@ class RegionManager @Inject constructor(
             tilesUrl = "${BASE_URL}telangana/tiles.pmtiles",
             graphSizeMb = 299, tilesSizeMb = 132),
         // West
-        Region("maharashtra", "Maharashtra", "", "", graphSizeMb = 180, tilesSizeMb = 120),
+        Region("maharashtra", "Maharashtra",
+            graphUrl = "${BASE_URL}maharashtra/valhalla_tiles.tar",
+            tilesUrl = "${BASE_URL}maharashtra/tiles.pmtiles",
+            graphSizeMb = 759, tilesSizeMb = 381),
         Region("goa", "Goa", "", "", graphSizeMb = 15, tilesSizeMb = 10),
         Region("gujarat", "Gujarat", "", "", graphSizeMb = 130, tilesSizeMb = 95),
         Region("rajasthan", "Rajasthan", "", "", graphSizeMb = 120, tilesSizeMb = 90),
@@ -96,6 +105,45 @@ class RegionManager @Inject constructor(
         Region("andaman", "Andaman & Nicobar", "", "", graphSizeMb = 6, tilesSizeMb = 4),
     )
 
+    /**
+     * Approximate state lookup by coordinate — used to suggest which region to download when a
+     * route fails because the rider is outside the installed extract. Bounding boxes are rough and
+     * can overlap; first match wins. Returns null outside covered India.
+     */
+    fun regionForLocation(lat: Double, lng: Double): Region? {
+        val id = when {
+            lat in 15.8..19.9 && lng in 77.0..81.0 -> "telangana"
+            lat in 11.5..15.8 && lng in 74.0..78.5 -> "karnataka"
+            lat in 8.0..13.0 && lng in 76.0..80.5 -> "tamil_nadu"
+            lat in 8.0..13.0 && lng in 74.5..77.5 -> "kerala"
+            lat in 13.0..19.5 && lng in 76.5..84.5 -> "andhra_pradesh"
+            lat in 15.5..22.0 && lng in 72.5..81.0 -> "maharashtra"
+            lat in 14.5..15.8 && lng in 73.5..74.5 -> "goa"
+            lat in 20.0..24.5 && lng in 68.0..74.5 -> "gujarat"
+            lat in 23.0..30.0 && lng in 69.5..78.5 -> "rajasthan"
+            lat in 28.0..29.0 && lng in 76.5..77.5 -> "delhi_ncr"
+            lat in 23.5..31.0 && lng in 77.0..84.5 -> "uttar_pradesh"
+            lat in 21.0..26.5 && lng in 74.0..82.5 -> "madhya_pradesh"
+            lat in 29.5..33.0 && lng in 73.5..77.0 -> "punjab"
+            lat in 27.5..31.0 && lng in 74.5..77.5 -> "haryana"
+            lat in 30.5..33.5 && lng in 75.5..79.0 -> "himachal"
+            lat in 28.5..31.5 && lng in 77.5..81.0 -> "uttarakhand"
+            lat in 32.0..37.0 && lng in 73.5..80.0 -> "jammu_kashmir"
+            lat in 32.0..36.0 && lng in 75.5..78.5 -> "ladakh"
+            lat in 21.5..27.0 && lng in 85.5..89.0 -> "west_bengal"
+            lat in 17.5..22.5 && lng in 81.0..87.5 -> "odisha"
+            lat in 24.0..27.5 && lng in 83.0..88.5 -> "bihar"
+            lat in 21.5..25.5 && lng in 83.0..87.5 -> "jharkhand"
+            lat in 17.5..24.0 && lng in 80.0..84.5 -> "chhattisgarh"
+            lat in 24.0..28.0 && lng in 89.5..96.0 -> "assam"
+            else -> null
+        }
+        return id?.let { rid -> availableRegions.firstOrNull { it.id == rid } }
+    }
+
+    /** True when a region has real download URLs (i.e. its tiles are built + hosted). */
+    fun isRegionAvailable(region: Region): Boolean = region.graphUrl.isNotBlank()
+
     fun isGraphInstalled(): Boolean =
         tilesFile.exists() && tilesFile.length() > 0
 
@@ -128,6 +176,7 @@ class RegionManager @Inject constructor(
                 DebugLog.i(TAG) { "PMTiles installed for ${region.name}" }
             }
 
+            prefs.edit().putString("installed_region_id", region.id).apply()
             _downloadState.value = DownloadState.Complete(region.name)
             Result.success(Unit)
         } catch (e: Exception) {
