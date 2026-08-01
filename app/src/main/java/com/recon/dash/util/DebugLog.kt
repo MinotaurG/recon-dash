@@ -43,7 +43,8 @@ object DebugLog {
             // Gzip any leftover uncompressed .log files from previous sessions (keep, don't delete).
             dir.listFiles { f -> f.isFile && f.name.endsWith(".log") }?.forEach { gzipInPlace(it) }
             logFile = File(dir, "session-${fileStamp.format(Date())}.log")
-            writeLine("==== log session ${ts.format(Date())} (v${BuildConfig.VERSION_NAME}) ====")
+            val header = "==== log session ${ts.format(Date())} (v${BuildConfig.VERSION_NAME}) ===="
+            io.execute { writeLineOnIo(header) }
         }
     }
 
@@ -67,27 +68,40 @@ object DebugLog {
     fun e(tag: String, message: () -> String, error: Throwable? = null) {
         if (!BuildConfig.DEBUG) return
         val msg = runCatching(message).getOrElse { "?" }
-        runCatching { if (error == null) Log.e(tag, msg) else Log.e(tag, msg, error) }
-        writeLine("${ts.format(Date())} E/$tag: $msg${error?.let { " :: ${it.stackTraceToString()}" } ?: ""}")
+        val trace = error?.let { " :: ${it.stackTraceToString()}" } ?: ""
+        val whenMs = System.currentTimeMillis()
+        io.execute {
+            runCatching { if (error == null) Log.e(tag, msg) else Log.e(tag, msg, error) }
+            writeLineOnIo("${ts.format(Date(whenMs))} E/$tag: $msg$trace")
+        }
     }
 
     private inline fun log(level: Char, tag: String, message: () -> String) {
         if (!BuildConfig.DEBUG) return
         val msg = runCatching(message).getOrElse { return }
+        // Do EVERYTHING off the caller thread. Under the dash send-storm this path was hit ~48x/s
+        // from socket/render/nav threads; formatting the timestamp (SimpleDateFormat is slow AND
+        // not thread-safe) + synchronous Log.x + per-line file open all added up on hot threads.
+        // Now the caller only captures a nanotime + hands off; the io thread formats + writes.
+        val whenNanos = System.currentTimeMillis()
+        io.execute { emit(level, tag, msg, whenNanos) }
+    }
+
+    // Runs only on the single io thread — so SimpleDateFormat (not thread-safe) is safe here, and
+    // logcat + file writes never touch the app's hot threads.
+    private fun emit(level: Char, tag: String, msg: String, whenMs: Long) {
         runCatching {
             when (level) { 'D' -> Log.d(tag, msg); 'I' -> Log.i(tag, msg); 'W' -> Log.w(tag, msg) }
         }
-        writeLine("${ts.format(Date())} $level/$tag: $msg")
+        val line = "${ts.format(Date(whenMs))} $level/$tag: $msg"
+        writeLineOnIo(line)
     }
 
-    private fun writeLine(line: String) {
-        if (logFile == null) return
-        // Serialize file work on the single io thread (append + roll check off the caller thread).
-        io.execute {
-            runCatching {
-                rollIfNeeded()
-                logFile?.appendText(line + "\n")
-            }
+    private fun writeLineOnIo(line: String) {
+        val f = logFile ?: return
+        runCatching {
+            rollIfNeeded()
+            (logFile ?: f).appendText(line + "\n")
         }
         recent.add(line); while (recent.size > RECENT_MAX) recent.poll()
     }

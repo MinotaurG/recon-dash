@@ -112,6 +112,7 @@ class ActiveNavViewModel @Inject constructor(
         com.recon.dash.dash.DashKeepAliveService.startFor(
             context, com.recon.dash.dash.DashKeepAliveService.REASON_NAV,
         )
+        registerScreenStateLogging()
         viewModelScope.launch {
             if (!router.graphExists()) {
                 DebugLog.w(TAG) { "No graph — nav will rely on pre-computed route if available" }
@@ -319,6 +320,36 @@ class ActiveNavViewModel @Inject constructor(
     @Volatile private var lastGpsFixAtMs = 0L // last real GPS fix; gates out coarse NETWORK fixes
     private var locationThread: android.os.HandlerThread? = null
 
+    // Diagnostic: log screen on/off so the next ride can prove whether the GPS dropouts line up
+    // with screen-off (Android suspending location delivery) vs. happening screen-on too (which
+    // would point at a different cause, e.g. a second location client). Registered during nav.
+    private var screenReceiver: android.content.BroadcastReceiver? = null
+    private fun registerScreenStateLogging() {
+        if (screenReceiver != null) return
+        val r = object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: android.content.Context?, i: android.content.Intent?) {
+                val evt = when (i?.action) {
+                    android.content.Intent.ACTION_SCREEN_ON -> "screen_on"
+                    android.content.Intent.ACTION_SCREEN_OFF -> "screen_off"
+                    android.content.Intent.ACTION_USER_PRESENT -> "user_present"
+                    else -> return
+                }
+                com.recon.dash.util.NavLog.event(evt)
+            }
+        }
+        val filter = android.content.IntentFilter().apply {
+            addAction(android.content.Intent.ACTION_SCREEN_ON)
+            addAction(android.content.Intent.ACTION_SCREEN_OFF)
+            addAction(android.content.Intent.ACTION_USER_PRESENT)
+        }
+        context.registerReceiver(r, filter)
+        screenReceiver = r
+    }
+    private fun unregisterScreenStateLogging() {
+        screenReceiver?.let { runCatching { context.unregisterReceiver(it) } }
+        screenReceiver = null
+    }
+
     /** Destination reached: stop location updates + save the ride, keep the arrival UI. */
     private fun onArrival() {
         locationListener?.let { listener ->
@@ -331,6 +362,7 @@ class ActiveNavViewModel @Inject constructor(
         com.recon.dash.dash.DashKeepAliveService.stopFor(
             context, com.recon.dash.dash.DashKeepAliveService.REASON_NAV,
         )
+        unregisterScreenStateLogging()
         divergenceTickJob?.cancel()
         divergenceTickJob = null
         voiceManager?.resetTrip()
@@ -427,6 +459,7 @@ class ActiveNavViewModel @Inject constructor(
         com.recon.dash.dash.DashKeepAliveService.stopFor(
             context, com.recon.dash.dash.DashKeepAliveService.REASON_NAV,
         )
+        unregisterScreenStateLogging()
         voiceManager?.resetTrip()
         navSessionManager.stopNavigation()
         // App scope, not viewModelScope: stopNavigation() is often called from onCleared(), where
