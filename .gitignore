@@ -32,3 +32,6 @@ CPP_NATIVE_HANDOUT.md
 
 # Prebuilt Valhalla native libs — backed up to R2 (see valhalla/README.md), not in git
 valhalla/src/main/jniLibs/**/*.so
+
+# OBD / Car Scanner raw dumps (personal telemetry, large)
+raw-dumps/
