@@ -38,17 +38,41 @@ class DashKeepAliveService : Service() {
         const val ACTION_START = "com.recon.dash.DASH_START"
         const val ACTION_STOP  = "com.recon.dash.DASH_STOP"
 
-        fun start(context: Context) {
-            val i = Intent(context, DashKeepAliveService::class.java).setAction(ACTION_START)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i)
-            else context.startService(i)
+        /**
+         * The service (wakelock + foreground `location` type) keeps GPS alive with the screen off.
+         * It is needed by TWO independent things: the dash stream AND active navigation. Previously
+         * only the dash started/stopped it, so when the dash link flapped the service died and GPS
+         * froze mid-ride even though nav still needed it. We track WHO needs it and only stop when
+         * NOBODY does. [KeepAliveReasons] holds the pure decision so it's unit-testable.
+         */
+        private val reasons = KeepAliveReasons()
+
+        fun startFor(context: Context, reason: String) {
+            val wasIdle = !reasons.anyActive()
+            reasons.add(reason)
+            if (wasIdle) {
+                val i = Intent(context, DashKeepAliveService::class.java).setAction(ACTION_START)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i)
+                else context.startService(i)
+            }
         }
 
-        fun stop(context: Context) {
-            context.startService(
-                Intent(context, DashKeepAliveService::class.java).setAction(ACTION_STOP)
-            )
+        /** Release one reason; only actually stops the service when no reason remains. */
+        fun stopFor(context: Context, reason: String) {
+            reasons.remove(reason)
+            if (!reasons.anyActive()) {
+                context.startService(
+                    Intent(context, DashKeepAliveService::class.java).setAction(ACTION_STOP)
+                )
+            }
         }
+
+        const val REASON_DASH = "dash"
+        const val REASON_NAV  = "nav"
+
+        // Back-compat shims (dash side still calls these).
+        fun start(context: Context) = startFor(context, REASON_DASH)
+        fun stop(context: Context)  = stopFor(context, REASON_DASH)
     }
 
     private var wakeLock: PowerManager.WakeLock? = null

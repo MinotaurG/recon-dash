@@ -107,6 +107,11 @@ class ActiveNavViewModel @Inject constructor(
     }
 
     private fun startNavigation() {
+        // Keep GPS alive with the screen off for the WHOLE nav, independent of the dash. Previously
+        // only the dash held this foreground/wakelock, so a flapping dash link froze GPS mid-ride.
+        com.recon.dash.dash.DashKeepAliveService.startFor(
+            context, com.recon.dash.dash.DashKeepAliveService.REASON_NAV,
+        )
         viewModelScope.launch {
             if (!router.graphExists()) {
                 DebugLog.w(TAG) { "No graph — nav will rely on pre-computed route if available" }
@@ -321,6 +326,11 @@ class ActiveNavViewModel @Inject constructor(
         }
         locationListener = null
         locationThread?.quitSafely(); locationThread = null
+        // Release nav's hold on the keep-alive service (only actually stops it if the dash also
+        // no longer needs it — see KeepAliveReasons).
+        com.recon.dash.dash.DashKeepAliveService.stopFor(
+            context, com.recon.dash.dash.DashKeepAliveService.REASON_NAV,
+        )
         divergenceTickJob?.cancel()
         divergenceTickJob = null
         voiceManager?.resetTrip()
@@ -412,6 +422,11 @@ class ActiveNavViewModel @Inject constructor(
         }
         locationListener = null
         locationThread?.quitSafely(); locationThread = null
+        // Release nav's hold on the keep-alive service (only actually stops it if the dash also
+        // no longer needs it — see KeepAliveReasons).
+        com.recon.dash.dash.DashKeepAliveService.stopFor(
+            context, com.recon.dash.dash.DashKeepAliveService.REASON_NAV,
+        )
         voiceManager?.resetTrip()
         navSessionManager.stopNavigation()
         // App scope, not viewModelScope: stopNavigation() is often called from onCleared(), where

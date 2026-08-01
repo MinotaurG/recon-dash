@@ -31,7 +31,21 @@ class DashViewModel @Inject constructor(
     private val config: DashConfig,
     private val navSessionManager: NavSessionManager,
     private val wallpaperRepo: WallpaperRepository,
+    private val regionManager: com.recon.dash.data.RegionManager,
 ) : ViewModel() {
+
+    init {
+        // When a region download finishes, refresh the live tile provider so the newly-installed
+        // pmtiles are served immediately — without this the map kept serving stale/online tiles
+        // until an app restart (TileSource opens the file once at creation).
+        viewModelScope.launch {
+            regionManager.downloadState.collect { st ->
+                if (st is com.recon.dash.data.DownloadState.Complete) {
+                    tileProvider?.reloadOfflineTiles()
+                }
+            }
+        }
+    }
 
     companion object {
         private const val TAG = "DashViewModel"

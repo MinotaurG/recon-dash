@@ -57,6 +57,16 @@ class TileSource(context: Context) {
         return if (f.exists()) f else null
     }
 
+    /**
+     * Re-open the on-disk region.pmtiles. Call after a region download replaces the file so a
+     * long-lived TileSource picks up the new tiles WITHOUT an app restart (the reader is opened
+     * once in init; a download writes the file directly and this refreshes the handle).
+     */
+    fun reload() {
+        openPMTiles()
+        DebugLog.i(TAG) { "Reloaded pmtiles: hasPMTiles=${reader?.isValid == true}" }
+    }
+
     fun clear() {
         reader?.close()
         reader = null

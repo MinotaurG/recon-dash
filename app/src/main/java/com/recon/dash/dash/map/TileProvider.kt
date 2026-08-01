@@ -51,6 +51,16 @@ class TileProvider(context: Context, private val scope: CoroutineScope) {
     private val pmtiles = TileSource(context)
     @Volatile private var lastFetchAt = 0L
 
+    /**
+     * Re-open the offline pmtiles + drop cached tiles. Call after a region download so a
+     * long-lived provider serves the newly-installed region instead of stale online tiles.
+     */
+    fun reloadOfflineTiles() {
+        pmtiles.reload()
+        memory.evictAll()
+        DebugLog.i(TAG) { "TileProvider reloaded offline tiles (hasPMTiles=${pmtiles.hasPMTiles})" }
+    }
+
     // Tile-source telemetry: how many tiles came from the offline PMTiles bundle vs. had to be
     // fetched online. Logged every LOG_EVERY tiles so a ride's offline-vs-online map coverage is
     // visible in the log (previously we could only INFER online fallback).
