@@ -53,23 +53,30 @@ class RegionDownloadViewModel @Inject constructor(
         }
         viewModelScope.launch {
             regionManager.downloadRegion(region, region.graphUrl)
-            _installed.value = regionManager.isGraphInstalled()
-            _installedRegionId.value = regionManager.installedRegionId()
-            _installedSizeMb.value = regionManager.installedSizeMb()
+            refresh()   // recomputes installed + clears the now-installed region's "Suggested" tag
         }
     }
 
     fun clearGraph() {
         regionManager.clearGraph()
-        _installed.value = false
-        _installedRegionId.value = null
-        _installedSizeMb.value = 0
+        refresh()
     }
 
     private fun detectSuggestedRegion() {
         val loc = LocationHelper.getLastKnown(context) ?: return
-        // Point-in-polygon via RegionManager/RegionGeocoder — single source of truth (was a
-        // duplicate bounding-box table here that disagreed with the router's).
-        _suggestedRegionId.value = regionManager.regionForLocation(loc.lat, loc.lng)?.id
+        // "Suggested" = the bundle for the rider's location that is NOT already installed. Point-in
+        // -polygon via RegionManager/RegionGeocoder (single source of truth). Recomputed via
+        // refresh() after a download/clear so the tag clears once the region becomes installed
+        // (was set once at init and never cleared -> the tag persisted after downloading).
+        val here = regionManager.regionForLocation(loc.lat, loc.lng)?.id
+        _suggestedRegionId.value = if (here != null && here != regionManager.installedRegionId()) here else null
+    }
+
+    /** Recompute installed + suggested state (call after download/clear so the UI reflects reality). */
+    private fun refresh() {
+        _installed.value = regionManager.isGraphInstalled()
+        _installedRegionId.value = regionManager.installedRegionId()
+        _installedSizeMb.value = regionManager.installedSizeMb()
+        detectSuggestedRegion()
     }
 }

@@ -135,8 +135,10 @@ private fun ReadyContent(
     onDownloadRegion: () -> Unit = {},
 ) {
     Column {
-        // Offline download suggestion
-        if (state.isOnlineRoute) {
+        // Offline download suggestion: shown whenever this origin's bundle isn't installed
+        // (you're navigating a region you don't have offline), regardless of whether the route
+        // itself came from online fallback or a neighbouring installed bundle.
+        if (state.downloadableRegionName != null) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -157,13 +159,16 @@ private fun ReadyContent(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Download offline maps",
+                            text = "Download ${state.downloadableRegionName}",
                             color = GoldAccent,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = "Route calculated online. Download region data for offline navigation.",
+                            text = if (state.isOnlineRoute)
+                                "This route was calculated online. Download for offline navigation."
+                            else
+                                "You don't have this region offline yet. Download for offline navigation.",
                             color = OnSurface.copy(alpha = 0.5f),
                             fontSize = 11.sp,
                         )

@@ -38,6 +38,8 @@ sealed class RoutePreviewState {
         val avoidTolls: Boolean = false,
         val avoidHighways: Boolean = false,
         val isOnlineRoute: Boolean = false,
+        /** The bundle to offer for offline download for this route's origin, if any + not installed. */
+        val downloadableRegionName: String? = null,
     ) : RoutePreviewState()
     data class Error(val message: String) : RoutePreviewState()
     /**
@@ -191,6 +193,12 @@ class RoutePreviewViewModel @Inject constructor(
             avoidTolls = avoidTolls,
             avoidHighways = avoidHighways,
             isOnlineRoute = usedOnlineRouting,
+            // Offer the offline download when this origin's bundle isn't the installed one — i.e.
+            // you're navigating a region you don't have offline. Independent of whether routing
+            // happened to succeed online; the point is "you could have this offline."
+            downloadableRegionName = regionManager.regionForLocation(originLat, originLng)
+                ?.takeIf { it.id != regionManager.installedRegionId() && regionManager.isRegionAvailable(it) }
+                ?.name,
         )
     }
 
