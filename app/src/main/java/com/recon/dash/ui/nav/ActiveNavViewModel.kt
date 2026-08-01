@@ -49,6 +49,8 @@ class ActiveNavViewModel @Inject constructor(
         private const val TAG = "ActiveNavVM"
         private const val MIN_REROUTE_INTERVAL_MS = 8_000L
         private const val REROUTE_ACCURACY_GATE_M = 50f
+        // If a real GPS fix arrived within this window, ignore NETWORK-provider fixes entirely.
+        private const val GPS_FRESH_MS = 10_000L
     }
 
     private val _navState = MutableStateFlow(NavDisplayState())
@@ -131,9 +133,15 @@ class ActiveNavViewModel @Inject constructor(
 
     private suspend fun computeRoute(from: GeoPoint, isReroute: Boolean = false) {
         val to = GeoPoint(destLat, destLng)
+        // Track which engine actually produced the route (was a static "valhalla/osrm" string that
+        // told us nothing — so we could never tell from logs whether a ride was offline or online).
+        var actualSource = "valhalla"
         var result = router.route(from, to)
         if (result is RouterResult.Failure) {
-            DebugLog.w(TAG) { "Offline route failed, trying OSRM online: ${(result as RouterResult.Failure).error}" }
+            val why = (result as RouterResult.Failure).error
+            DebugLog.w(TAG) { "Offline (valhalla) route failed, trying OSRM online: $why" }
+            com.recon.dash.util.NavLog.route("valhalla_fail", 0.0, 0, reroute = isReroute)
+            actualSource = "osrm"
             result = com.recon.dash.dash.nav.OsrmClient.route(from, to)
         }
         when (result) {
@@ -155,9 +163,8 @@ class ActiveNavViewModel @Inject constructor(
                     nextInstruction = firstManeuver?.instruction,
                     destinationName = destName,
                 )
-                val src = if (result.route.maneuvers.isNotEmpty()) "valhalla/osrm" else "unknown"
-                com.recon.dash.util.NavLog.route(src, r.totalMeters, r.maneuvers.size, reroute = isReroute)
-                DebugLog.i(TAG) { "Route computed — ${r.totalMeters.toInt()}m, ${r.maneuvers.size} maneuvers" }
+                com.recon.dash.util.NavLog.route(actualSource, r.totalMeters, r.maneuvers.size, reroute = isReroute)
+                DebugLog.i(TAG) { "Route computed via $actualSource — ${r.totalMeters.toInt()}m, ${r.maneuvers.size} maneuvers" }
                 // Debug-only: capture how this on-device route diverges from Google's, for offline
                 // costing analysis. Runs off the nav path and never blocks routing.
                 captureDivergence(r, from, if (isReroute) "reroute" else "plan")
@@ -178,10 +185,16 @@ class ActiveNavViewModel @Inject constructor(
         val listener = LocationListener { location -> onLocationUpdate(location) }
         locationListener = listener
 
+        // Deliver fixes on a DEDICATED background thread, not the main Looper. On the main thread
+        // the render/UI work was starving location callbacks (a ride logged only ~24 fixes in 80
+        // min instead of ~1/s). A private HandlerThread keeps fixes flowing regardless of UI load.
+        val thread = android.os.HandlerThread("nav-location").apply { start() }
+        locationThread = thread
+        val looper = thread.looper
+
         try {
             // Seed the map center immediately with the last-known fix so the dash shows the
-            // map right away — GPS_PROVIDER can take a while (or never fix indoors), which
-            // otherwise left the render loop with pos=null and no map.
+            // map right away — GPS_PROVIDER can take a while (or never fix indoors).
             @Suppress("MissingPermission")
             val seed = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                 ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
@@ -190,12 +203,14 @@ class ActiveNavViewModel @Inject constructor(
                 DebugLog.i(TAG) { "Seeding position from last-known fix" }
                 onLocationUpdate(seed)
             }
-            // Register BOTH providers: NETWORK works indoors / before a GPS lock, GPS is
-            // accurate outdoors. Whichever delivers first drives the map.
+            // Register BOTH providers: NETWORK is a fallback before a GPS lock / indoors, GPS is
+            // accurate outdoors. onLocationUpdate PREFERS GPS and drops NETWORK while GPS is fresh
+            // (previously coarse ~100 m NETWORK fixes poisoned the map-matcher). 500 ms interval
+            // for a denser track than the old 1000 ms.
             @Suppress("MissingPermission")
             for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
                 if (lm.isProviderEnabled(provider)) {
-                    lm.requestLocationUpdates(provider, 1000L, 0f, listener, Looper.getMainLooper())
+                    lm.requestLocationUpdates(provider, 500L, 0f, listener, looper)
                     DebugLog.i(TAG) { "Requested updates from $provider" }
                 }
             }
@@ -216,6 +231,28 @@ class ActiveNavViewModel @Inject constructor(
         val rawPos = GeoPoint(location.latitude, location.longitude)
         val speed = location.speed
         val accuracy = if (location.hasAccuracy()) location.accuracy else Float.MAX_VALUE
+
+        // Log the provider + inter-fix gap so we can SEE the location-pipeline health (was invisible:
+        // we could only infer network-fix poisoning + starved fix rate from accuracy values).
+        val nowMs = System.currentTimeMillis()
+        val gapMs = if (lastFixAtMs == 0L) 0 else nowMs - lastFixAtMs
+        lastFixAtMs = nowMs
+        com.recon.dash.util.NavLog.event(
+            "fix_src",
+            "prov=${location.provider} acc=${accuracy.toInt()} gapMs=$gapMs v=${"%.1f".format(speed)}",
+        )
+
+        // Reject coarse NETWORK fixes while GPS is fresh. NETWORK (cell/wifi) fixes are ~100 m-1 km
+        // and fire alongside real GPS; feeding them to the matcher snapped the rider up to ~1.2 km
+        // off-road and broke turn-by-turn. Track the last GPS fix time; if a good GPS fix arrived in
+        // the last GPS_FRESH_MS, ignore NETWORK entirely. NETWORK is only used before the first lock.
+        val isGps = location.provider == LocationManager.GPS_PROVIDER
+        if (isGps) lastGpsFixAtMs = nowMs
+        val gpsFresh = lastGpsFixAtMs != 0L && (nowMs - lastGpsFixAtMs) <= GPS_FRESH_MS
+        if (!isGps && gpsFresh) {
+            com.recon.dash.util.NavLog.event("fix_drop", "prov=${location.provider} reason=gps_fresh")
+            return
+        }
 
         // ONE progress computation, shared by phone + dash via NavSessionManager.
         val bearing = if (location.hasBearing()) location.bearing else null
@@ -273,6 +310,9 @@ class ActiveNavViewModel @Inject constructor(
     }
 
     @Volatile private var arrivedHandled = false
+    @Volatile private var lastFixAtMs = 0L    // for logging inter-fix gaps (location-pipeline health)
+    @Volatile private var lastGpsFixAtMs = 0L // last real GPS fix; gates out coarse NETWORK fixes
+    private var locationThread: android.os.HandlerThread? = null
 
     /** Destination reached: stop location updates + save the ride, keep the arrival UI. */
     private fun onArrival() {
@@ -280,6 +320,7 @@ class ActiveNavViewModel @Inject constructor(
             (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(listener)
         }
         locationListener = null
+        locationThread?.quitSafely(); locationThread = null
         divergenceTickJob?.cancel()
         divergenceTickJob = null
         voiceManager?.resetTrip()
@@ -370,6 +411,7 @@ class ActiveNavViewModel @Inject constructor(
             lm.removeUpdates(listener)
         }
         locationListener = null
+        locationThread?.quitSafely(); locationThread = null
         voiceManager?.resetTrip()
         navSessionManager.stopNavigation()
         // App scope, not viewModelScope: stopNavigation() is often called from onCleared(), where

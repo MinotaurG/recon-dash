@@ -11,14 +11,22 @@ observations rather than from OpenDash's source.
 
 ## Hardware reality (as of this project)
 
-- **M4 Mac (Apple Silicon):** built-in WiFi CAN do monitor mode via Wireless Diagnostics. FREE.
-  Cannot run x86 Kali/Ubuntu live USB. USB monitor-mode adapters have no macOS driver.
+- **M1 Pro Mac (Apple Silicon):** built-in WiFi CAN do monitor mode via Wireless Diagnostics.
+  FREE, no purchase. This is the capture rig. Cannot run x86 Kali/Ubuntu live USB, and USB
+  monitor-mode adapters (AR9271/MT7612U) have NO Apple Silicon macOS driver — so the
+  "adapter + Linux" combo does not apply here. Use the built-in sniffer instead.
 - **Galaxy Tab S9 SE:** bootloader locked (OEM unlock removed in One UI 8, on bit D — no
-  downgrade). Cannot root, cannot live-boot. Not usable as a capture device.
-- **USB monitor-mode adapter (AR9271 / MT7612U):** only useful with a **Linux** box. Don't
-  buy one until there's a Linux machine (used mini-PC / old laptop) to plug it into.
+  downgrade). Cannot root, cannot live-boot. proot Ubuntu in Termux does NOT help: monitor
+  mode is a kernel/driver/hardware capability, proot is userspace-only above the Android
+  kernel, so it can't touch the radio. Tablet is not a capture device (can only ANALYZE a
+  .pcap after the fact).
+- **USB monitor-mode adapter (AR9271 / MT7612U):** useless on the Apple Silicon Mac (no
+  driver) and on the tablet (no kernel support). Would only help with a separate x86 Linux
+  box. Don't buy one — the Mac's built-in sniffer covers this.
 
-**Current path: macOS built-in Wireless Diagnostics Sniffer.** Free, works on M4.
+**Band:** the RE dash broadcasts on **2.4 GHz**, so only 2.4 GHz capture is needed.
+
+**Current path: the M1 Pro Mac's built-in Wireless Diagnostics Sniffer.** Free, works today.
 
 ## What we're hunting (from the OpenDash-derived DashSession comments)
 

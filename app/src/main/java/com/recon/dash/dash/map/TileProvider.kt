@@ -41,6 +41,7 @@ class TileProvider(context: Context, private val scope: CoroutineScope) {
             "ReconDash/1.0 (motorcycle-nav; single-user; contact: github.com/MinotaurG)"
         private const val MAX_PREFETCH_TILES = 600
         private const val MIN_FETCH_GAP_MS = 250L // OSM rate limit: max 2 req/s
+        private const val LOG_EVERY = 50L         // emit a TILESTAT line every N tile lookups
     }
 
     private val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -49,6 +50,18 @@ class TileProvider(context: Context, private val scope: CoroutineScope) {
     private val inflight = ConcurrentHashMap.newKeySet<String>()
     private val pmtiles = TileSource(context)
     @Volatile private var lastFetchAt = 0L
+
+    // Tile-source telemetry: how many tiles came from the offline PMTiles bundle vs. had to be
+    // fetched online. Logged every LOG_EVERY tiles so a ride's offline-vs-online map coverage is
+    // visible in the log (previously we could only INFER online fallback).
+    private val pmtilesHits = java.util.concurrent.atomic.AtomicLong(0)
+    private val onlineMisses = java.util.concurrent.atomic.AtomicLong(0)
+    private fun logTileStatsMaybe() {
+        val h = pmtilesHits.get(); val m = onlineMisses.get()
+        if ((h + m) % LOG_EVERY == 0L && (h + m) > 0) {
+            DebugLog.i(TAG) { "TILESTAT pmtilesHit=$h onlineMiss=$m (${if (h + m > 0) (h * 100 / (h + m)) else 0}% offline)" }
+        }
+    }
 
     /** Non-blocking: returns the cached tile, else kicks off async load. */
     fun get(z: Int, x: Int, y: Int): Bitmap? {
@@ -63,10 +76,13 @@ class TileProvider(context: Context, private val scope: CoroutineScope) {
         if (pmtiles.hasPMTiles) {
             val bmp = pmtiles.getTile(z, xw, y)
             if (bmp != null) {
+                pmtilesHits.incrementAndGet(); logTileStatsMaybe()
                 memory.put(key, bmp)
                 return bmp
             }
         }
+        // Not served from the offline bundle -> will be fetched online below.
+        onlineMisses.incrementAndGet(); logTileStatsMaybe()
 
         if (inflight.add(key)) {
             scope.launch(Dispatchers.IO) {
