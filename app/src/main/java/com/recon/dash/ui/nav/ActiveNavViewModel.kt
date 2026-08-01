@@ -191,12 +191,12 @@ class ActiveNavViewModel @Inject constructor(
         val listener = LocationListener { location -> onLocationUpdate(location) }
         locationListener = listener
 
-        // Deliver fixes on a DEDICATED background thread, not the main Looper. On the main thread
-        // the render/UI work was starving location callbacks (a ride logged only ~24 fixes in 80
-        // min instead of ~1/s). A private HandlerThread keeps fixes flowing regardless of UI load.
-        val thread = android.os.HandlerThread("nav-location").apply { start() }
-        locationThread = thread
-        val looper = thread.looper
+        // Deliver on the MAIN looper. A private HandlerThread (tried in 2ad923e) BROKE screen-off
+        // GPS on Samsung: the OS suspends background app threads when the screen locks, so fixes
+        // queued to that thread never fired (proven: fixes stopped exactly at screen_off, resumed
+        // at screen_on). The main looper is kept alive by the foreground service, so it survives
+        // screen-off — which is how pocket/screen-off nav worked weeks ago. This reverts to that.
+        val looper = Looper.getMainLooper()
 
         try {
             // Seed the map center immediately with the last-known fix so the dash shows the
@@ -210,13 +210,11 @@ class ActiveNavViewModel @Inject constructor(
                 onLocationUpdate(seed)
             }
             // Register BOTH providers: NETWORK is a fallback before a GPS lock / indoors, GPS is
-            // accurate outdoors. onLocationUpdate PREFERS GPS and drops NETWORK while GPS is fresh
-            // (previously coarse ~100 m NETWORK fixes poisoned the map-matcher). 500 ms interval
-            // for a denser track than the old 1000 ms.
+            // accurate outdoors. onLocationUpdate PREFERS GPS and drops NETWORK while GPS is fresh.
             @Suppress("MissingPermission")
             for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
                 if (lm.isProviderEnabled(provider)) {
-                    lm.requestLocationUpdates(provider, 500L, 0f, listener, looper)
+                    lm.requestLocationUpdates(provider, 1000L, 0f, listener, looper)
                     DebugLog.i(TAG) { "Requested updates from $provider" }
                 }
             }
@@ -318,7 +316,6 @@ class ActiveNavViewModel @Inject constructor(
     @Volatile private var arrivedHandled = false
     @Volatile private var lastFixAtMs = 0L    // for logging inter-fix gaps (location-pipeline health)
     @Volatile private var lastGpsFixAtMs = 0L // last real GPS fix; gates out coarse NETWORK fixes
-    private var locationThread: android.os.HandlerThread? = null
 
     // Diagnostic: log screen on/off so the next ride can prove whether the GPS dropouts line up
     // with screen-off (Android suspending location delivery) vs. happening screen-on too (which
@@ -356,7 +353,6 @@ class ActiveNavViewModel @Inject constructor(
             (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(listener)
         }
         locationListener = null
-        locationThread?.quitSafely(); locationThread = null
         // Release nav's hold on the keep-alive service (only actually stops it if the dash also
         // no longer needs it — see KeepAliveReasons).
         com.recon.dash.dash.DashKeepAliveService.stopFor(
@@ -453,7 +449,6 @@ class ActiveNavViewModel @Inject constructor(
             lm.removeUpdates(listener)
         }
         locationListener = null
-        locationThread?.quitSafely(); locationThread = null
         // Release nav's hold on the keep-alive service (only actually stops it if the dash also
         // no longer needs it — see KeepAliveReasons).
         com.recon.dash.dash.DashKeepAliveService.stopFor(
