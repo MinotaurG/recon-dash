@@ -42,6 +42,19 @@ class DashSocket(private val network: android.net.Network? = null) : AutoCloseab
 
     private val seq = AtomicInteger(0)
 
+    // Gate sends on link state. When the WiFi link drops, the RTP encoder (4 fps) + heartbeats keep
+    // calling send() into a dead socket — that produced ~48 failed sends/sec, each a syscall +
+    // logcat line (34k+ RTP + 5k+ TX 'ENETUNREACH' in one ride). While down we no-op sends cheaply.
+    @Volatile private var linkUp: Boolean = true
+    private val suppressed = AtomicInteger(0)
+    fun setLinkUp(up: Boolean) {
+        if (up != linkUp) {
+            linkUp = up
+            DebugLog.i(TAG) { "link ${if (up) "UP — sends resumed" else "DOWN — sends paused"}" }
+            if (up) suppressed.set(0)
+        }
+    }
+
     init {
         var tx:  DatagramSocket? = null
         var rx:  DatagramSocket? = null
@@ -72,6 +85,7 @@ class DashSocket(private val network: android.net.Network? = null) : AutoCloseab
 
     /** Send a K1G control packet (seq patched here, like K1GTx in the reference). */
     fun send(data: ByteArray) {
+        if (!linkUp) { suppressed.incrementAndGet(); return }
         val pkt = K1GPacket.patchSeq(data, seq.getAndIncrement())
         DebugLog.d(TAG) { "TX →$BROADCAST:$CTRL_PORT  ${pkt.size}B  ${pkt.hex()}" }
         // UDP fire-and-forget: a dropped/unreachable link (ENETUNREACH, EBADF) must never
@@ -79,6 +93,8 @@ class DashSocket(private val network: android.net.Network? = null) : AutoCloseab
         try {
             txSocket.send(DatagramPacket(pkt, pkt.size, broadcastAddr, CTRL_PORT))
         } catch (e: Exception) {
+            // Link just dropped between the flag check and the send — pause + log ONCE.
+            setLinkUp(false)
             DebugLog.w(TAG) { "TX send failed (link down?): ${e.message}" }
         }
     }
@@ -86,11 +102,13 @@ class DashSocket(private val network: android.net.Network? = null) : AutoCloseab
     private val rtpSent = AtomicInteger(0)
 
     fun sendRtp(data: ByteArray) {
+        if (!linkUp) { suppressed.incrementAndGet(); return }
         try {
             rtpSocket.send(DatagramPacket(data, data.size, dashAddr, RTP_PORT))
             val n = rtpSent.incrementAndGet()
             if (n <= 3 || n % 100 == 0) DebugLog.i(TAG) { "RTP sent #$n (${data.size}B →$DASH_IP:$RTP_PORT)" }
         } catch (e: Exception) {
+            setLinkUp(false)
             DebugLog.w(TAG) { "RTP send FAILED: ${e.message}" }
         }
     }

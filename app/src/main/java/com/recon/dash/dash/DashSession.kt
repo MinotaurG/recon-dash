@@ -42,6 +42,9 @@ class DashSession(
 
     private var socket: DashSocket? = null
     private var auth: DashAuth? = null
+
+    /** Gate the socket's sends on WiFi link state (avoids the failed-send storm when the link drops). */
+    fun setLinkUp(up: Boolean) { socket?.setLinkUp(up) }
     @Volatile private var authConfirmed = false
     @Volatile private var authRetries = 0
 

@@ -109,6 +109,10 @@ class DashViewModel @Inject constructor(
 
         wifiCollectJob = viewModelScope.launch {
             wifi.state.collect { ws ->
+                // Gate the dash socket's sends on link state: when WiFi drops (onLost ->
+                // REQUESTING), pause RTP/heartbeat sending so we don't hammer a dead socket ~48x/s
+                // (that produced 40k ENETUNREACH failed-sends + a logcat flood in one ride).
+                session?.setLinkUp(ws.status == WifiConnStatus.CONNECTED)
                 when (ws.status) {
                     WifiConnStatus.CONNECTED -> {
                         // WiFi CONNECTED can fire more than once (Android 13+ resolves the
