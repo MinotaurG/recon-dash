@@ -31,6 +31,12 @@ data class NavDisplayState(
     val arrived: Boolean = false,
     val offRoute: Boolean = false,
     val speedAlertActive: Boolean = false,
+    /**
+     * True when the OS Battery Saver is ON. On Samsung One UI, Battery Saver throttles screen-off
+     * GPS delivery to ~20s network-only batches (verified 2026-08-02) — devastating for nav — and
+     * per-app "unrestricted" does NOT override it. We surface a warning so the rider disables it.
+     */
+    val batterySaverOn: Boolean = false,
 )
 
 @HiltViewModel
@@ -106,12 +112,20 @@ class ActiveNavViewModel @Inject constructor(
         }
     }
 
+    /** OS Battery Saver on? It throttles screen-off GPS (Samsung: ~20s network-only batches). */
+    private fun isBatterySaverOn(): Boolean =
+        (context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager).isPowerSaveMode
+
     private fun startNavigation() {
         // Keep GPS alive with the screen off for the WHOLE nav, independent of the dash. Previously
         // only the dash held this foreground/wakelock, so a flapping dash link froze GPS mid-ride.
         com.recon.dash.dash.DashKeepAliveService.startFor(
             context, com.recon.dash.dash.DashKeepAliveService.REASON_NAV,
         )
+        if (isBatterySaverOn()) {
+            DebugLog.w(TAG) { "BATTERY SAVER is ON — screen-off GPS will be throttled (~20s gaps). Warn user." }
+            com.recon.dash.util.NavLog.event("battery_saver", "on=true")
+        }
         registerScreenStateLogging()
         viewModelScope.launch {
             if (!router.graphExists()) {
@@ -291,6 +305,7 @@ class ActiveNavViewModel @Inject constructor(
             arrived = progress.arrived,
             offRoute = progress.offRoute,
             speedAlertActive = alertActive,
+            batterySaverOn = isBatterySaverOn(),
         )
 
         voiceManager?.maybeAnnounce(

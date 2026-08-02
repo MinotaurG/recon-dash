@@ -78,6 +78,24 @@ fun ActiveNavScreen(
             DashStatusBadge(dashState)
             Spacer(Modifier.height(8.dp))
 
+            // Battery Saver throttles screen-off GPS to ~20s gaps on Samsung — nav becomes useless
+            // with the screen locked. Warn the rider prominently to turn it off.
+            if (navState.batterySaverOn) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF4A2E00))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        "Battery Saver is ON — turn it OFF for reliable GPS with the screen locked.",
+                        color = Color(0xFFFFB020), fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
             if (navState.speedAlertActive) {
                 Text("SLOW DOWN", color = Color(0xFFFF453A), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
