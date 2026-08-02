@@ -28,6 +28,49 @@ observations rather than from OpenDash's source.
 
 **Current path: the M1 Pro Mac's built-in Wireless Diagnostics Sniffer.** Free, works today.
 
+## Secondary goals for the same capture (added 2026-08-02)
+
+One RE-app capture can answer three things at once. Prioritised:
+
+### G1 — Turn glyph maneuver codes (high confidence win)
+In **analogue / turn-by-turn mode** the RE app *sends* maneuver packets phone→dash
+and the dash renders its native glyph. We currently hardcode the maneuver glyph to
+`CONTINUE` (0x0B) because we never decoded the real codes. Capture the RE app
+navigating a route with varied turns (left, right, slight, sharp, roundabout exits,
+U-turn, arrive) and record **which byte code precedes each glyph change** on the
+dash. This is phone→dash, so no decryption barrier beyond the WPA layer (PSK known).
+
+Cross-check with an **active probe** — no RE app needed for this half: from our own
+app, send maneuver codes `0x00..0x2F` one at a time and photograph which glyph the
+TFT shows. The sniff is the reference; the probe is the confirmation. Do both.
+
+Fill in:
+
+| Sent code (hex) | Glyph shown on dash | Maneuver meaning |
+|-----------------|---------------------|------------------|
+| 0x0B            | (baseline)          | continue / straight |
+|                 |                     |                  |
+
+### G2 — `0F` telemetry subscribe command (the engine-data question)
+Per `docs/OBD_TELEMETRY_FINDINGS.md`, our own sessions receive almost no `0F`
+(encrypted instrument-cluster) payload — only 2 packets in a full ride. Hypothesis:
+the RE app sends a **subscribe/request** command the dash needs before it streams
+telemetry, which we never send.
+
+What to capture / check:
+- Does the RE app receive a **steady stream of `0F` packets** during a ride (vs our
+  ~2)? Count them. If yes → there IS a trigger we're missing.
+- Find the phone→dash command that precedes the `0F` stream starting. That direction
+  is readable. Record its port + bytes.
+- We CANNOT decrypt the RE app's `0F` payloads (its AES key is client-generated and
+  RSA-sealed to the dash — different key than ours). We are mining the **request**
+  and the **packet volume**, not their plaintext. Once we know the trigger, we replay
+  it from our app and decrypt the resulting `0F` with **our** key.
+- If the RE app *also* gets little/no `0F` engine data → confirms engine telemetry is
+  CAN/OBD-only and the dash never puts it on WiFi. That closes the question for good.
+
+### G3 — Auth handshake bytes (original clean-room goal, below)
+
 ## What we're hunting (from the OpenDash-derived DashSession comments)
 
 The connection sequence, on the dash's local AP (dash IP typically `192.168.x.1`):
