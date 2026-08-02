@@ -11,6 +11,13 @@ Data used:
 - OBD ground truth: `2026-08-02 09-41-38.brc` — healthy engine data
   (RPM 0–6488, vehicle speed 0–122 km/h, coolant 39–96 °C, 2.3k samples/PID).
 
+> **Status: confirmation ride pending.** This verdict is from one ride. A repeat with
+> Battery Saver OFF + fresh app launch is planned to remove all doubt. Note: Battery
+> Saver throttles *location delivery*, not the dash's WiFi telemetry stream — the `0C`
+> sampling this ride was already complete (~199 samples/channel), so the retry is
+> expected to reproduce, not overturn, this result. The thing that could actually
+> change it is G2 (a `0F` subscribe command), not Battery Saver — see PROTOCOL_CAPTURE.md.
+
 ## Verdict: the dash does NOT put decodable engine telemetry on the WiFi link
 
 Evidence chain:
