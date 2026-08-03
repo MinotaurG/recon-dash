@@ -146,6 +146,10 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
         ) {
             ActiveNavScreen(
                 onStop = { navController.popBackStack() },
+                // Auto-cast to the dash when nav starts (like the RE app): connect the
+                // activity-scoped session if it isn't already up. connect() is idempotent —
+                // a no-op when already connecting/streaming — so this is safe to call on entry.
+                onAutoCast = { dashViewModel.connect() },
             )
         }
         composable(Routes.DASH) {

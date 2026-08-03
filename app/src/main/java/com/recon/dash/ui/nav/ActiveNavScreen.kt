@@ -27,8 +27,13 @@ import com.recon.dash.ui.theme.OnSurface
 @Composable
 fun ActiveNavScreen(
     onStop: () -> Unit,
+    onAutoCast: () -> Unit = {},
     viewModel: ActiveNavViewModel = hiltViewModel(),
 ) {
+    // Auto-cast to the dash once when this screen appears (RE-app behavior: start nav = show
+    // map on the dash). Idempotent on the dash side, so a no-op if already connected.
+    androidx.compose.runtime.LaunchedEffect(Unit) { onAutoCast() }
+
     val navState by viewModel.navState.collectAsStateWithLifecycle()
     val dashState by viewModel.dashStatus.collectAsStateWithLifecycle()
     val riderPosition by viewModel.riderPosition.collectAsStateWithLifecycle()
