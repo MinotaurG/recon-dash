@@ -36,6 +36,8 @@ fun TestScreen(
     val mode by viewModel.mode.collectAsStateWithLifecycle()
     val log by viewModel.protocolLog.collectAsStateWithLifecycle()
     val pendingPairing by viewModel.pendingPairingSsid.collectAsStateWithLifecycle()
+    val glyphProbeRunning by viewModel.glyphProbeRunning.collectAsStateWithLifecycle()
+    val glyphProbeCode by viewModel.glyphProbeCode.collectAsStateWithLifecycle()
 
     val isIdle = state == DashState.IDLE || state == DashState.ERROR
 
@@ -141,6 +143,31 @@ fun TestScreen(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldAccent),
         ) {
             Text("Telemetry Lab", fontSize = 14.sp)
+        }
+
+        // Glyph probe: sweeps maneuver codes 0x00..0x2F to the dash (4s each) so we can
+        // photograph each turn glyph and build the code map. Only useful while streaming.
+        if (state == DashState.STREAMING) {
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = {
+                    if (glyphProbeRunning) viewModel.stopGlyphProbe()
+                    else viewModel.startGlyphProbe()
+                },
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (glyphProbeRunning) Color(0xFFCC6666) else GoldAccent,
+                ),
+            ) {
+                val label = when {
+                    glyphProbeRunning && glyphProbeCode != null ->
+                        "Stop probe  (showing 0x%02X)".format(glyphProbeCode)
+                    glyphProbeRunning -> "Stop glyph probe"
+                    else -> "Start glyph probe (0x00-0x2F)"
+                }
+                Text(label, fontSize = 14.sp)
+            }
         }
 
         Spacer(Modifier.height(20.dp))

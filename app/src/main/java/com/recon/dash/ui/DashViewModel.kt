@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.recon.dash.dash.*
 import com.recon.dash.dash.map.MapRenderer
+import com.recon.dash.dash.protocol.DashCommands
 import com.recon.dash.dash.map.TileProvider
 import com.recon.dash.dash.nav.Route
 import com.recon.dash.dash.video.DashEncoder
@@ -216,6 +217,8 @@ class DashViewModel @Inject constructor(
 
     fun disconnect() {
         appendLog("Disconnecting")
+        glyphProbeJob?.cancel(); glyphProbeJob = null
+        _glyphProbeRunning.value = false; _glyphProbeCode.value = null
         ThemeState.forceRiding = false
         navObserveJob?.cancel(); navObserveJob = null
         bridge?.stopMediaForwarding()
@@ -453,6 +456,67 @@ class DashViewModel @Inject constructor(
         idleRenderer?.release(); idleRenderer = null
         wallpaperPath = null
     }
+
+    // ── Glyph probe (debug) ────────────────────────────────────────────────
+    // Maps the dash's turn-glyph codes without any WiFi sniffing: we drive the
+    // EXISTING nav-info send path (session.updateNavInfo -> activeNavPacket /
+    // routeCard 05 02 maneuver field, sent at 1 Hz while streaming) across every
+    // candidate code and let the rider photograph which glyph the TFT shows. This
+    // touches only ui/ — no changes to the proven dash/ protocol code. We currently
+    // hardcode CONTINUE (0x0B); everything else is unverified, hence this sweep.
+    private var glyphProbeJob: Job? = null
+
+    private val _glyphProbeRunning = MutableStateFlow(false)
+    val glyphProbeRunning = _glyphProbeRunning.asStateFlow()
+    private val _glyphProbeCode = MutableStateFlow<Int?>(null)
+    val glyphProbeCode = _glyphProbeCode.asStateFlow()
+
+    /**
+     * Sweep maneuver codes [from]..[to] inclusive, dwelling [dwellMs] on each so the
+     * dash re-renders and the rider can photograph the glyph. Requires an active
+     * STREAMING session (connect first). Fixed distances/units keep every field but
+     * the glyph constant, so only the maneuver changes frame-to-frame.
+     */
+    fun startGlyphProbe(from: Int = 0x00, to: Int = 0x2F, dwellMs: Long = 4_000L) {
+        val sess = session
+        if (sess == null || _connectionState.value != DashState.STREAMING) {
+            appendLog("Glyph probe needs an active streaming session — connect first")
+            return
+        }
+        if (glyphProbeJob?.isActive == true) return
+        glyphProbeJob = viewModelScope.launch {
+            _glyphProbeRunning.value = true
+            appendLog("GLYPH PROBE start ${hex(from)}..${hex(to)} @ ${dwellMs}ms — watch the dash")
+            try {
+                for (code in from..to) {
+                    if (!isActive || session == null) break
+                    _glyphProbeCode.value = code
+                    // Hold every other field steady (500 m to turn, 5.0 km total) so the
+                    // ONLY thing changing on the dash between codes is the glyph itself.
+                    sess.updateNavInfo(
+                        maneuver = code,
+                        primaryDist = 500, primaryUnit = DashCommands.NAV_UNIT_METERS,
+                        totalDist = 5000, totalUnit = DashCommands.NAV_UNIT_METERS,
+                    )
+                    appendLog("GLYPH ${hex(code)} (${code}) — photograph now")
+                    delay(dwellMs)
+                }
+                appendLog("GLYPH PROBE done")
+            } finally {
+                _glyphProbeRunning.value = false
+                _glyphProbeCode.value = null
+            }
+        }
+    }
+
+    fun stopGlyphProbe() {
+        glyphProbeJob?.cancel(); glyphProbeJob = null
+        _glyphProbeRunning.value = false
+        _glyphProbeCode.value = null
+        appendLog("GLYPH PROBE stopped")
+    }
+
+    private fun hex(v: Int) = "0x%02X".format(v)
 
     private fun appendLog(message: String) {
         val ts = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
