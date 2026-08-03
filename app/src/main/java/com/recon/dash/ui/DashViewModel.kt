@@ -476,8 +476,13 @@ class DashViewModel @Inject constructor(
      * dash re-renders and the rider can photograph the glyph. Requires an active
      * STREAMING session (connect first). Fixed distances/units keep every field but
      * the glyph constant, so only the maneuver changes frame-to-frame.
+     *
+     * Range default 0x00..0x40: covers 0x0B (CONTINUE, the one hardware-verified code)
+     * AND 0x3C — a code the real RE app was observed sending in a captured route card
+     * (see DashCommands template + OpenDash notes), our best lead for a real glyph.
+     * Neither OpenDash nor us has verified anything beyond 0x0B; this sweep is how we do it.
      */
-    fun startGlyphProbe(from: Int = 0x00, to: Int = 0x2F, dwellMs: Long = 4_000L) {
+    fun startGlyphProbe(from: Int = 0x00, to: Int = 0x40, dwellMs: Long = 4_000L) {
         val sess = session
         if (sess == null || _connectionState.value != DashState.STREAMING) {
             appendLog("Glyph probe needs an active streaming session — connect first")

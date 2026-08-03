@@ -164,7 +164,7 @@ fun TestScreen(
                     glyphProbeRunning && glyphProbeCode != null ->
                         "Stop probe  (showing 0x%02X)".format(glyphProbeCode)
                     glyphProbeRunning -> "Stop glyph probe"
-                    else -> "Start glyph probe (0x00-0x2F)"
+                    else -> "Start glyph probe (0x00-0x40)"
                 }
                 Text(label, fontSize = 14.sp)
             }
