@@ -11,12 +11,13 @@ Data used:
 - OBD ground truth: `2026-08-02 09-41-38.brc` — healthy engine data
   (RPM 0–6488, vehicle speed 0–122 km/h, coolant 39–96 °C, 2.3k samples/PID).
 
-> **Status: confirmation ride pending.** This verdict is from one ride. A repeat with
-> Battery Saver OFF + fresh app launch is planned to remove all doubt. Note: Battery
-> Saver throttles *location delivery*, not the dash's WiFi telemetry stream — the `0C`
-> sampling this ride was already complete (~199 samples/channel), so the retry is
-> expected to reproduce, not overturn, this result. The thing that could actually
-> change it is G2 (a `0F` subscribe command), not Battery Saver — see PROTOCOL_CAPTURE.md.
+> **Status: CONFIRMED (2026-08-03).** Two more rides (20:31 Croma, 20:44 Prestige) with
+> the dash streaming, GPS healthy (Battery Saver off — ruling out any confound), and
+> richer OBD (34-35 PIDs) reproduced the result. No `0C` channel tracks RPM/speed/coolant
+> consistently across rides: `0x26` scored r=+0.45/+0.48 vs rpm on the 20:31 ride but only
+> +0.11 on 20:44 — a real signal would correlate in both; the inconsistency marks it as
+> coincidental. `0F` was again ~empty (4 packets across both rides). Verdict unchanged and
+> now well-supported: engine telemetry is OBD-II/CAN only. See "Confirmation" section below.
 
 ## Verdict: the dash does NOT put decodable engine telemetry on the WiFi link
 
@@ -83,14 +84,43 @@ the personal telemetry:
 python3 correlate_dash_obd.py <recon_dash_session.log> <carscanner.brc>
 ```
 
-## Side note captured this ride — screen-off GPS
+## Confirmation rides (2026-08-03)
 
-Same ride independently confirmed the screen-off GPS collapse in **both** apps:
-- Nav app: screen-on median fix gap ~1.0 s (51 GPS fixes); screen-off **0 GPS**
-  fixes, network-only, gaps 10–274 s.
-- Car Scanner: only 8 GPS points all ride, all clustered in the two screen-on
-  windows.
+Two back-to-back recon-dash nav rides with the dash streaming and OBD recording
+alongside (Car Scanner GPS logging was later disabled — not needed; correlation aligns
+on wall-clock time, not position):
 
-Two independent apps failing identically on the same device points at an OS/device
-screen-off location throttle, not our code. See `SCREEN-OFF-GPS-ROOTCAUSE.md`; the
-durable fix (FusedLocationProviderClient) is deferred to the next maps work cycle.
+| File | Dest | PIDs | RPM max | `0C` lines | `0F` pkts | best `0C` r vs RPM |
+|------|------|------|---------|-----------|-----------|--------------------|
+| `2026-08-03_20-31-36.brc` | Croma Kokapet | 35 | 4656 | 3622 | (part of 4) | 0x26 +0.45 |
+| `2026-08-03_20-44-53.brc` | Prestige Tranquil | 34 | 5447 | 3272 | (part of 4) | 0x26 +0.11 |
+
+The `0x26`-vs-RPM correlation is **not reproducible** across the two rides (+0.45 then
++0.11) → coincidental, not a real sensor. Everything else < |0.2|. `0F` total across
+both rides = 4 packets (no engine stream). This is the strongest dataset we've captured
+(dash connected, GPS healthy, richer PIDs, two independent rides) and it confirms the
+verdict rather than overturning it.
+
+A separate `2026-08-03_20-17-10.brc` exists from the RE-app WiFi-sniff session (recon-dash
+was idle then); it is OBD-only ground truth, not a dash-correlation dataset.
+
+## Side result — screen-off GPS fix CONFIRMED on the road (2026-08-03)
+
+The 2026-08-03 recon-dash rides also confirmed the Battery-Saver fix on a real ride.
+With Battery Saver OFF + a fresh app launch, screen-off GPS was flawless:
+
+| Screen | fixes | GPS | network | median gap | p90 gap |
+|--------|-------|-----|---------|-----------|---------|
+| ON     | 22    | 20  | 2       | 1001 ms   | 1095 ms |
+| OFF    | 582   | 553 | 29      | 1000 ms   | 1006 ms |
+
+Contrast the 2026-08-02 ride (Battery Saver ON): screen-off = **0 GPS fixes, p90
+~224,000 ms**. The fix holds: 553 screen-off GPS fixes at a steady ~1 Hz, `battery_saver`
+logged 0 times. Root cause (system Battery Saver throttling screen-off location delivery)
+and fix (saver off + fresh process) are now proven end-to-end. See
+`SCREEN-OFF-GPS-ROOTCAUSE.md`. FusedLocationProviderClient remains an optional robustness
+upgrade for the next maps cycle, no longer a blocker.
+
+(The earlier 2026-08-02 ride had independently shown the collapse in BOTH apps — nav app
+0 screen-off GPS fixes, Car Scanner only 8 GPS points all clustered in screen-on windows
+— pointing at the OS throttle rather than our code.)

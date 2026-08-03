@@ -30,6 +30,11 @@ system Battery Saver.** All those were correctly set and it still throttled.
 2. **Restart the app** (force-stop / fresh launch) so the OS re-evaluates it without the
    already-applied throttle.
 
+**Verified on the road 2026-08-03.** Two recon-dash nav rides with Battery Saver off +
+fresh launch: screen-off GPS ran at a steady ~1 Hz (553 GPS fixes, median 1000 ms /
+p90 1006 ms) — indistinguishable from screen-on. Contrast 2026-08-02 with Battery Saver
+on: 0 screen-off GPS fixes, p90 ~224,000 ms. Fix confirmed end-to-end.
+
 ## What we shipped
 - `NavDisplayState.batterySaverOn` + `isBatterySaverOn()` (PowerManager.isPowerSaveMode),
   checked each location update.
