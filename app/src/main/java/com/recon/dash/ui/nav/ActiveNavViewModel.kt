@@ -21,6 +21,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/** Route summary shown on arrival (mirrors the RE app's "Navigation Ended" card). */
+data class RideSummary(
+    val distanceMeters: Double,
+    val durationSeconds: Long,
+    val avgSpeedKmh: Double,
+)
+
 data class NavDisplayState(
     val etaText: String = "--",
     val remainingText: String = "",
@@ -29,6 +36,8 @@ data class NavDisplayState(
     val destinationName: String = "",
     val currentStreet: String = "",
     val arrived: Boolean = false,
+    /** Populated once on arrival so the screen can show a route summary instead of going blank. */
+    val summary: RideSummary? = null,
     val offRoute: Boolean = false,
     val speedAlertActive: Boolean = false,
     /**
@@ -362,8 +371,22 @@ class ActiveNavViewModel @Inject constructor(
         screenReceiver = null
     }
 
-    /** Destination reached: stop location updates + save the ride, keep the arrival UI. */
+    /**
+     * Destination reached: capture the route summary, stop location updates + save the ride, and
+     * LINGER on an arrival screen (map stays centred on the destination, summary card shown) rather
+     * than tearing the whole nav view down instantly — that blank-out was the bad UX. The rider
+     * dismisses via End Navigation; only then do we pop back (see [stopNavigation]).
+     */
     private fun onArrival() {
+        // Snapshot the ride stats BEFORE stopping the recorder, so the summary card has real numbers.
+        val s = rideRecorder.stats.value
+        val summary = RideSummary(
+            distanceMeters = s.distanceMeters,
+            durationSeconds = s.durationSeconds,
+            avgSpeedKmh = s.avgSpeedKmh,
+        )
+        _navState.value = _navState.value.copy(arrived = true, summary = summary)
+
         locationListener?.let { listener ->
             (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(listener)
         }
@@ -377,11 +400,12 @@ class ActiveNavViewModel @Inject constructor(
         divergenceTickJob?.cancel()
         divergenceTickJob = null
         voiceManager?.resetTrip()
-        navSessionManager.stopNavigation()
         // Save on the app scope, NOT viewModelScope: the nav screen often finishes right after
         // arrival, cancelling viewModelScope before the DB insert runs and silently losing the ride.
         appScope.launch { rideRecorder.stop() }
-        // navState already carries arrived=true; the screen shows the arrival summary card.
+        // Deliberately DO NOT call navSessionManager.stopNavigation() here — keeping the nav session
+        // alive holds the route geometry + destination on-screen so the arrival view isn't blank.
+        // stopNavigation() runs when the rider taps End Navigation (dismisses the arrival screen).
     }
 
     // ── Google divergence capture (debug-only tuning data) ──
