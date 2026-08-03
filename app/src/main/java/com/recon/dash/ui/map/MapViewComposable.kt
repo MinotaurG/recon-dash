@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -117,6 +119,43 @@ fun MapViewComposable(
         }
     }
 
+    // Smoothing animator (live nav only): GPS arrives at 1 Hz, which makes the marker + camera
+    // step jerkily. Here we tween the marker position, bearing, and follow-camera from the previous
+    // fix to the new one over ~950 ms (just under the fix interval) so motion looks continuous
+    // without any extra GPS. Bearing uses shortest-arc interpolation to avoid a 359°→1° spin.
+    val prevLat = remember { doubleArrayOf(Double.NaN) }
+    val prevLng = remember { doubleArrayOf(Double.NaN) }
+    val prevBearing = remember { floatArrayOf(Float.NaN) }
+    LaunchedEffect(riderLocation, riderBearing, followRider) {
+        val map = mapRef[0]
+        val style = styleRef[0]
+        val target = riderLocation
+        if (!followRider || map == null || style == null || !style.isFullyLoaded || target == null) {
+            if (target != null) { prevLat[0] = target.lat; prevLng[0] = target.lng; prevBearing[0] = riderBearing }
+            return@LaunchedEffect
+        }
+        val fromLat = if (prevLat[0].isNaN()) target.lat else prevLat[0]
+        val fromLng = if (prevLng[0].isNaN()) target.lng else prevLng[0]
+        val fromBrg = if (prevBearing[0].isNaN()) riderBearing else prevBearing[0]
+        // Shortest-arc bearing delta in [-180, 180].
+        var dBrg = ((riderBearing - fromBrg + 540f) % 360f) - 180f
+        val riderSrc = style.getSourceAs<GeoJsonSource>(RIDER_SOURCE)
+        val riderLayer = style.getLayer(RIDER_LAYER)
+        val anim = Animatable(0f)
+        anim.animateTo(1f, animationSpec = tween(durationMillis = 950)) {
+            val t = this.value
+            val lat = fromLat + (target.lat - fromLat) * t
+            val lng = fromLng + (target.lng - fromLng) * t
+            val brg = fromBrg + dBrg * t
+            riderSrc?.setGeoJson(Feature.fromGeometry(Point.fromLngLat(lng, lat)))
+            riderLayer?.setProperties(PropertyFactory.iconRotate(brg))
+            val cam = CameraPosition.Builder()
+                .target(LatLng(lat, lng)).zoom(16.5).bearing(brg.toDouble()).build()
+            runCatching { map.moveCamera(CameraUpdateFactory.newCameraPosition(cam)) }
+        }
+        prevLat[0] = target.lat; prevLng[0] = target.lng; prevBearing[0] = riderBearing
+    }
+
     AndroidView(factory = { mapView }, modifier = modifier)
 }
 
@@ -181,13 +220,13 @@ private fun applyRoute(
 
     // Current-location marker — a Google-Maps-style blue arrow that rotates to the
     // rider's travel bearing. Placed ABOVE the route line so it stays visible.
+    // In follow (live-nav) mode the position/bearing are driven by the smoothing animator
+    // (see the LaunchedEffect below) so the marker glides between the 1 Hz fixes instead of
+    // jumping; here we only ensure the layer exists and seed its first position.
     if (riderLocation != null) {
         val pt = Feature.fromGeometry(Point.fromLngLat(riderLocation.lng, riderLocation.lat))
         val existing = style.getSourceAs<GeoJsonSource>(RIDER_SOURCE)
-        if (existing != null) {
-            existing.setGeoJson(pt)
-            style.getLayer(RIDER_LAYER)?.setProperties(PropertyFactory.iconRotate(riderBearing))
-        } else {
+        if (existing == null) {
             style.addSource(GeoJsonSource(RIDER_SOURCE, pt))
             style.addLayer(
                 SymbolLayer(RIDER_LAYER, RIDER_SOURCE).withProperties(
@@ -198,20 +237,17 @@ private fun applyRoute(
                     PropertyFactory.iconIgnorePlacement(true),
                 )
             )
+        } else if (!followRider) {
+            // Preview mode: no animator running, so update the marker directly.
+            existing.setGeoJson(pt)
+            style.getLayer(RIDER_LAYER)?.setProperties(PropertyFactory.iconRotate(riderBearing))
         }
     }
 
     when {
-        // Live nav: FOLLOW the rider (travel-up), do NOT re-fit the whole route every fix
-        // (that fought the rider and kept zooming out).
-        followRider && riderLocation != null -> {
-            val cam = CameraPosition.Builder()
-                .target(LatLng(riderLocation.lat, riderLocation.lng))
-                .zoom(16.5)
-                .bearing(riderBearing.toDouble())
-                .build()
-            runCatching { map.easeCamera(CameraUpdateFactory.newCameraPosition(cam), 800) }
-        }
+        // Live nav: the follow-camera + marker are handled by the smoothing animator, NOT here,
+        // so we don't double-drive them (which caused stutter). Nothing to do in this branch.
+        followRider && riderLocation != null -> Unit
         // Preview: fit the whole route once.
         geometry.size >= 2 -> {
             val b = LatLngBounds.Builder()
