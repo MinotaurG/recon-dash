@@ -159,8 +159,49 @@ meaning:   (e.g. "byte0 = packet type 0x07; byte1 = subtype 0x00; ...")
 4. This addresses the COPYRIGHT axis only. The RSA-handshake/TPM and RE-complaint axes are
    unchanged (see `docs/LEGAL_NOTES.md`). Personal, undistributed use remains the safe posture.
 
+## BLOCKER found 2026-08-03: the phone connects with WPA3/SAE, not WPA2
+
+First real capture (`ch2`, 2026-08-03, ~15 MB, 22.7k data frames) was technically
+perfect — full 4-way handshake caught, correct channel/SSID — but **0 frames
+decrypted**. Root cause, verified three independent ways with tshark:
+
+- The dash beacon advertises **WPA2/WPA3 transition mode**: RSN lists AKM **PSK (2)
+  AND SAE-SHA256 (8)**, pairwise/group cipher AES-CCM.
+- The phone's **association request selected AKM = SAE (8)** — i.e. WPA3.
+- A complete **SAE (Dragonfly) exchange** is present: auth alg=3, seq 1 (commit,
+  status 0x7e anti-clogging) then seq 2 (confirm, status 0x00), both directions.
+  Zero open-system (alg=0) auth frames.
+
+Consequence: **`wpa-pwd` (password+SSID) can NEVER decrypt a WPA3/SAE session** — SAE
+does not derive the PTK from the password directly. No re-analysis of this file helps;
+the fix is entirely on the capture side (get a WPA2-PSK association instead).
+
+MACs from this capture (for reference in later analysis):
+- Dash (Visteon AP): `a8:40:0b:1f:3d:b3`  SSID `RE_K00G_251011`
+- Phone: `1e:a7:9c:0a:4c:19`
+
+### Why the phone won't downgrade (confirmed)
+Documented AOSP behavior: Android 10+ prefers WPA3 on a transition-mode AP, and
+Android 12+ honors the "Transition Disable" indication (do not use WPA2 if WPA3 is
+offered). One UI 8/8.5 exposes **no** user/developer/service-menu toggle to force
+WPA2-PSK for a client connection. The Galaxy Tab S9 SE (One UI 8.5) behaves the same
+— it will also negotiate SAE. So no modern Samsung client gives a decryptable capture.
+
+### The way through
+1. **Sniff our OWN app instead of the RE app.** `DashWifiManager.connect()` uses
+   `WifiNetworkSpecifier.setWpa2Passphrase()` (DashWifiManager.kt:164) — this pins the
+   association to **WPA2-PSK**, so a capture of our app IS decryptable with
+   `12345678:RE_K00G_251011`. And we already hold our own AES session key, so `0F`
+   telemetry decrypts regardless of the WiFi layer. This covers handshake + telemetry +
+   route-card packets. (The RE app is only still needed for glyph ground-truth.)
+2. **Glyphs via the active probe** (below / GlyphProbe) — needs NO sniffing at all.
+   Our app sends maneuver codes 0x00..0x2F to the dash one at a time; photograph the
+   glyph each shows. Complete map, no decryption, no RE app.
+3. **RE-app WPA2 capture** only via a legacy WPA3-incapable client (old Android ≤9 /
+   old laptop), which will connect PSK. Low priority given (1)+(2) cover our needs.
+
 ## Capture log
 
 | Date | File | Channel | Handshake caught? | Notes |
 |------|------|---------|-------------------|-------|
-|      |      |         |                   |       |
+| 2026-08-03 | c889f3b67fa9_ch2_...pcap | 2 | Yes (4/4) | Undecryptable — phone used WPA3/SAE. See blocker above. |
