@@ -43,6 +43,7 @@ fun RegionDownloadScreen(
     val installedRegionId by viewModel.installedRegionId.collectAsStateWithLifecycle()
     val installedSizeMb by viewModel.installedSizeMb.collectAsStateWithLifecycle()
     val suggestedId by viewModel.suggestedRegionId.collectAsStateWithLifecycle()
+    val indiaMapInstalled by viewModel.indiaMapInstalled.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -151,8 +152,62 @@ fun RegionDownloadScreen(
             }
         }
 
+        // India base map — one download for map DISPLAY everywhere (separate from routing zones).
         Text(
-            text = "Available regions",
+            text = "Base map",
+            color = OnSurface.copy(alpha = 0.5f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(8.dp))
+        var showMapDeleteConfirm by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(DarkSurface)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("India map", color = OnSurface, fontSize = 14.sp)
+                Text(
+                    text = "~%.1f GB · shown on the dash everywhere".format(viewModel.indiaMapSizeMb / 1024f),
+                    color = OnSurface.copy(alpha = 0.4f),
+                    fontSize = 12.sp,
+                )
+            }
+            when {
+                indiaMapInstalled -> Text(
+                    "Delete", color = Color(0xFFEF4444), fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable { showMapDeleteConfirm = true },
+                )
+                downloadState is DownloadState.Downloading -> Text(
+                    "…", color = OnSurface.copy(alpha = 0.4f), fontSize = 13.sp,
+                )
+                else -> TextButton(onClick = { viewModel.downloadIndiaMap() }) {
+                    Text("Download", color = GoldAccent, fontSize = 13.sp)
+                }
+            }
+        }
+        if (showMapDeleteConfirm) {
+            AlertDialog(
+                onDismissRequest = { showMapDeleteConfirm = false },
+                title = { Text("Delete India map?") },
+                text = { Text("Removes the ~2 GB base map. The dash map will fall back to online tiles until you download it again.") },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.clearIndiaMap(); showMapDeleteConfirm = false }) {
+                        Text("Delete", color = Color(0xFFEF4444))
+                    }
+                },
+                dismissButton = { TextButton(onClick = { showMapDeleteConfirm = false }) { Text("Cancel") } },
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+
+        Text(
+            text = "Routing regions",
             color = OnSurface.copy(alpha = 0.5f),
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
@@ -253,7 +308,7 @@ private fun RegionRow(
                 }
             }
             Text(
-                text = "~${region.totalSizeMb} MB (routing ${region.graphSizeMb} + tiles ${region.tilesSizeMb})",
+                text = "~${region.graphSizeMb} MB routing graph",
                 color = OnSurface.copy(alpha = 0.4f),
                 fontSize = 12.sp,
             )

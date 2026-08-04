@@ -37,6 +37,11 @@ class RegionDownloadViewModel @Inject constructor(
     private val _installedSizeMb = MutableStateFlow(regionManager.installedSizeMb())
     val installedSizeMb = _installedSizeMb.asStateFlow()
 
+    // All-India display map (one download, covers the whole country) — separate from routing zones.
+    private val _indiaMapInstalled = MutableStateFlow(regionManager.isIndiaMapInstalled())
+    val indiaMapInstalled = _indiaMapInstalled.asStateFlow()
+    val indiaMapSizeMb: Int get() = RegionManager.INDIA_MAP_SIZE_MB
+
     val regions: List<Region> get() = regionManager.availableRegions
 
     /** Display name of the installed bundle, or null. */
@@ -62,6 +67,19 @@ class RegionDownloadViewModel @Inject constructor(
         refresh()
     }
 
+    /** Download the one all-India display map (~2 GB). */
+    fun downloadIndiaMap() {
+        viewModelScope.launch {
+            regionManager.downloadIndiaMap()
+            refresh()
+        }
+    }
+
+    fun clearIndiaMap() {
+        regionManager.clearIndiaMap()
+        refresh()
+    }
+
     private fun detectSuggestedRegion() {
         val loc = LocationHelper.getLastKnown(context) ?: return
         // "Suggested" = the bundle for the rider's location that is NOT already installed. Point-in
@@ -77,6 +95,7 @@ class RegionDownloadViewModel @Inject constructor(
         _installed.value = regionManager.isGraphInstalled()
         _installedRegionId.value = regionManager.installedRegionId()
         _installedSizeMb.value = regionManager.installedSizeMb()
+        _indiaMapInstalled.value = regionManager.isIndiaMapInstalled()
         detectSuggestedRegion()
     }
 }

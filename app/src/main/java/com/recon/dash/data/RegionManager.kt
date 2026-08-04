@@ -43,6 +43,14 @@ class RegionManager @Inject constructor(
         private const val TILES_FILE = "valhalla_tiles.tar"
         private const val BUFFER_SIZE = 8192
         private const val BASE_URL = "https://pub-10f8e863c0f544798593ccdb61ffd2a9.r2.dev/"
+
+        // One all-India vector map for DISPLAY (~2.1 GB). Downloaded once, covers the whole
+        // country so the map never has holes — decoupled from the per-zone ROUTING graphs
+        // (a zone gives you offline routing; the India map gives you the picture everywhere).
+        const val INDIA_MAP_URL = "${BASE_URL}india/india.pmtiles"
+        const val INDIA_MAP_SIZE_MB = 2018   // 2,116,435,030 bytes
+        private const val PMTILES_DIR = "pmtiles"
+        private const val PMTILES_FILE = "region.pmtiles"  // TileSource reads this exact name
     }
 
     private val _downloadState = MutableStateFlow<DownloadState>(DownloadState.Idle)
@@ -58,22 +66,22 @@ class RegionManager @Inject constructor(
         if (isGraphInstalled()) prefs.getString("installed_region_id", null) else null
 
     /**
-     * Offline units are ZONAL BUNDLES, not single states. A bundle covers several states so a
-     * rider routes seamlessly across the states they'd actually cross (Mumbai->Goa, Hyderabad->
-     * Bangalore) without the single-state-tile problem where one download overwrote another and
-     * cross-border routes broke. Only one bundle is installed at a time (see installedRegionId).
+     * Offline units are ZONAL ROUTING bundles now — Valhalla graph only, NOT map tiles. The map
+     * display comes from the single all-India pmtiles ([INDIA_MAP_URL], downloaded once), so a zone
+     * download is purely "let me route offline here". A bundle covers several states so a rider
+     * routes seamlessly across the states they'd actually cross (Mumbai->Goa, Hyderabad->Bangalore).
+     * Only one routing bundle is installed at a time (see installedRegionId).
      *
-     * URLs are set once a zone's tiles are built + uploaded to R2 (empty = "Coming soon").
+     * tilesSizeMb is 0 for all zones now — display is the shared India map, not per-zone tiles.
+     * URLs are set once a zone's graph is built + uploaded to R2 (empty = "Coming soon").
      */
     val availableRegions: List<Region> = listOf(
         Region("west", "West India (MH, GJ, GA, MP)",
             graphUrl = "${BASE_URL}west/valhalla_tiles.tar",
-            tilesUrl = "${BASE_URL}west/tiles.pmtiles",
-            graphSizeMb = 1536, tilesSizeMb = 822),
+            graphSizeMb = 1536),
         Region("south", "South India (KA, KL, TN, TG, AP)",
             graphUrl = "${BASE_URL}south/valhalla_tiles.tar",
-            tilesUrl = "${BASE_URL}south/tiles.pmtiles",
-            graphSizeMb = 1434, tilesSizeMb = 719),
+            graphSizeMb = 1434),
         Region("north", "North India (DL, PB, HR, RJ, UP, UK, HP)", "", "", graphSizeMb = 0),
         Region("east", "East India (WB, OD, BR, JH, CG)", "", "", graphSizeMb = 0),
         Region("northeast", "Northeast India (AS + 7 sisters)", "", "", graphSizeMb = 0),
@@ -124,9 +132,17 @@ class RegionManager @Inject constructor(
         tilesFile.exists() && tilesFile.length() > 0
 
     private val pmtilesFile: File
-        get() = File(File(context.filesDir, "pmtiles"), "region.pmtiles")
+        get() = File(File(context.filesDir, PMTILES_DIR), PMTILES_FILE)
 
-    /** On-disk size of everything an installed region occupies (routing graph + map tiles), in MB. */
+    /** True once the all-India display map is downloaded. Independent of any routing zone. */
+    fun isIndiaMapInstalled(): Boolean =
+        pmtilesFile.exists() && pmtilesFile.length() > 0
+
+    /** On-disk size of the installed India display map, in MB (0 if not installed). */
+    fun indiaMapSizeMb(): Int =
+        if (pmtilesFile.exists()) (pmtilesFile.length() / (1024 * 1024)).toInt() else 0
+
+    /** On-disk size of everything installed (India map + routing graph), in MB. */
     fun installedSizeMb(): Int {
         var bytes = 0L
         if (tilesFile.exists()) bytes += tilesFile.length()
@@ -134,29 +150,50 @@ class RegionManager @Inject constructor(
         return (bytes / (1024 * 1024)).toInt()
     }
 
+    /**
+     * Download the one all-India display map (~2.1 GB) into the pmtiles dir. This is the map you
+     * SEE, everywhere — separate from routing zones. Emits progress via [downloadState] and, on
+     * success, [DownloadState.Complete] so the live TileProvider reloads it without an app restart.
+     */
+    suspend fun downloadIndiaMap(): Result<Unit> = withContext(Dispatchers.IO) {
+        _downloadState.value = DownloadState.Downloading(0f, "India map")
+        try {
+            val pmtilesDir = File(context.filesDir, PMTILES_DIR).apply { mkdirs() }
+            val dest = File(pmtilesDir, PMTILES_FILE)
+            val tmp = File(context.cacheDir, "india.pmtiles.part")
+            downloadFile(INDIA_MAP_URL, tmp, INDIA_MAP_SIZE_MB * 1024L * 1024L, "India map", 0f, 1f)
+            if (dest.exists()) dest.delete()
+            tmp.copyTo(dest, overwrite = true)
+            tmp.delete()
+            DebugLog.i(TAG) { "India map installed (${dest.length() / 1024 / 1024}MB)" }
+            _downloadState.value = DownloadState.Complete("India map")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            _downloadState.value = DownloadState.Failed("India map download failed: ${e.message}")
+            DebugLog.e(TAG, { "India map download failed: ${e.message}" }, e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Download a zone's Valhalla ROUTING graph (.tar) only. Map display is the shared India map
+     * (see [downloadIndiaMap]), so this no longer fetches per-zone pmtiles. Installing a new zone
+     * replaces the single installed routing graph.
+     */
     suspend fun downloadRegion(region: Region, url: String): Result<Unit> = withContext(Dispatchers.IO) {
         _downloadState.value = DownloadState.Downloading(0f, region.name)
 
         try {
-            val totalEstimate = region.totalSizeMb * 1024L * 1024L
+            val totalEstimate = region.graphSizeMb * 1024L * 1024L
 
             // Download Valhalla tile extract (.tar) directly — no unzip needed.
             valhallaDir.mkdirs()
             val tmp = File(context.cacheDir, "region_tiles.tar")
-            downloadFile(region.graphUrl, tmp, totalEstimate, region.name, 0f, 0.65f)
+            downloadFile(region.graphUrl, tmp, totalEstimate, region.name, 0f, 1f)
             if (tilesFile.exists()) tilesFile.delete()
             tmp.copyTo(tilesFile, overwrite = true)
             tmp.delete()
-            DebugLog.i(TAG) { "Valhalla tiles installed for ${region.name} (${tilesFile.length() / 1024 / 1024}MB)" }
-
-            // Download PMTiles map (if URL exists)
-            if (region.tilesUrl.isNotBlank()) {
-                val pmtilesDir = File(context.filesDir, "pmtiles")
-                pmtilesDir.mkdirs()
-                val destFile = File(pmtilesDir, "region.pmtiles")
-                downloadFile(region.tilesUrl, destFile, totalEstimate, region.name, 0.65f, 1f)
-                DebugLog.i(TAG) { "PMTiles installed for ${region.name}" }
-            }
+            DebugLog.i(TAG) { "Valhalla routing graph installed for ${region.name} (${tilesFile.length() / 1024 / 1024}MB)" }
 
             prefs.edit().putString("installed_region_id", region.id).apply()
             _downloadState.value = DownloadState.Complete(region.name)
@@ -199,11 +236,26 @@ class RegionManager @Inject constructor(
         conn.disconnect()
     }
 
-    /** Delete ALL installed offline data (routing graph + map tiles) to free device space. */
+    /**
+     * Delete the installed ROUTING graph only (frees ~1.5 GB). Leaves the India display map intact
+     * — clearing a routing zone shouldn't nuke the 2 GB map you'd have to re-download. Use
+     * [clearIndiaMap] to remove the display map, or [clearAll] for everything.
+     */
     fun clearGraph() {
         valhallaDir.deleteRecursively()
-        pmtilesFile.parentFile?.deleteRecursively()   // also drop the ~hundreds-of-MB pmtiles
         prefs.edit().remove("installed_region_id").apply()
         _downloadState.value = DownloadState.Idle
+    }
+
+    /** Delete the all-India display map (frees ~2 GB). Leaves any routing graph intact. */
+    fun clearIndiaMap() {
+        pmtilesFile.parentFile?.deleteRecursively()
+        _downloadState.value = DownloadState.Idle
+    }
+
+    /** Delete ALL installed offline data (routing graph + India map). */
+    fun clearAll() {
+        clearGraph()
+        clearIndiaMap()
     }
 }
