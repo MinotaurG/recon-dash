@@ -5,6 +5,12 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -21,6 +27,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/** Route summary shown on arrival (mirrors the RE app's "Navigation Ended" card). */
+data class RideSummary(
+    val distanceMeters: Double,
+    val durationSeconds: Long,
+    val avgSpeedKmh: Double,
+)
+
 data class NavDisplayState(
     val etaText: String = "--",
     val remainingText: String = "",
@@ -29,6 +42,8 @@ data class NavDisplayState(
     val destinationName: String = "",
     val currentStreet: String = "",
     val arrived: Boolean = false,
+    /** Populated once on arrival so the screen can show a route summary instead of going blank. */
+    val summary: RideSummary? = null,
     val offRoute: Boolean = false,
     val speedAlertActive: Boolean = false,
     /**
@@ -89,6 +104,17 @@ class ActiveNavViewModel @Inject constructor(
     private var voiceManager: VoiceManager? = null
     private var locationListener: LocationListener? = null
     private var navTickJob: Job? = null
+
+    // Location delivery: FusedLocationProviderClient (Play Services) is the PRIMARY source — it
+    // fuses GPS + network + device sensors and does short dead-reckoning, so it survives the
+    // momentary GPS dropouts near buildings that made raw LocationManager go stale (the Prestige
+    // "freeze"), and it's more resistant to OEM screen-off throttling. We keep the raw
+    // LocationManager path as a fallback if Play Services is unavailable, and either way funnel
+    // into the same onLocationUpdate(Location) sink so the rest of the pipeline is unchanged.
+    private val fusedClient: FusedLocationProviderClient by lazy {
+        LocationServices.getFusedLocationProviderClient(context)
+    }
+    private var fusedCallback: LocationCallback? = null
 
     private val destName = savedStateHandle.get<String>("destName") ?: ""
     private val destLat = savedStateHandle.get<String>("destLat")?.toDoubleOrNull() ?: 0.0
@@ -202,19 +228,9 @@ class ActiveNavViewModel @Inject constructor(
 
     private fun startLocationUpdates() {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        val listener = LocationListener { location -> onLocationUpdate(location) }
-        locationListener = listener
 
-        // Deliver on the MAIN looper. A private HandlerThread (tried in 2ad923e) BROKE screen-off
-        // GPS on Samsung: the OS suspends background app threads when the screen locks, so fixes
-        // queued to that thread never fired (proven: fixes stopped exactly at screen_off, resumed
-        // at screen_on). The main looper is kept alive by the foreground service, so it survives
-        // screen-off — which is how pocket/screen-off nav worked weeks ago. This reverts to that.
-        val looper = Looper.getMainLooper()
-
+        // Seed the map immediately with the last-known fix so the dash shows the map right away.
         try {
-            // Seed the map center immediately with the last-known fix so the dash shows the
-            // map right away — GPS_PROVIDER can take a while (or never fix indoors).
             @Suppress("MissingPermission")
             val seed = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                 ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
@@ -223,18 +239,71 @@ class ActiveNavViewModel @Inject constructor(
                 DebugLog.i(TAG) { "Seeding position from last-known fix" }
                 onLocationUpdate(seed)
             }
-            // Register BOTH providers: NETWORK is a fallback before a GPS lock / indoors, GPS is
-            // accurate outdoors. onLocationUpdate PREFERS GPS and drops NETWORK while GPS is fresh.
+        } catch (e: SecurityException) {
+            DebugLog.w(TAG) { "Location permission not granted (seed): ${e.message}" }
+        }
+
+        if (startFusedUpdates()) return       // primary path
+        startRawLocationUpdates(lm)           // fallback if Play Services unavailable
+    }
+
+    /**
+     * Primary location path. Returns true if fused updates were requested. High-accuracy, 1 Hz.
+     * Delivered on the MAIN looper — kept alive by the foreground service so it survives screen-off
+     * (a private HandlerThread broke screen-off GPS on Samsung; see the raw path's history).
+     */
+    private fun startFusedUpdates(): Boolean {
+        return try {
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
+                .setMinUpdateIntervalMillis(1000L)
+                .setWaitForAccurateLocation(false)
+                .build()
+            val cb = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    result.lastLocation?.let { onLocationUpdate(it) }
+                }
+            }
+            fusedCallback = cb
+            @Suppress("MissingPermission")
+            fusedClient.requestLocationUpdates(request, cb, Looper.getMainLooper())
+            DebugLog.i(TAG) { "Location: FusedLocationProviderClient @1Hz (high accuracy)" }
+            true
+        } catch (e: SecurityException) {
+            DebugLog.w(TAG) { "Fused location permission denied: ${e.message}" }; false
+        } catch (e: Exception) {
+            // Play Services missing / disabled — fall back to raw LocationManager.
+            DebugLog.w(TAG) { "Fused location unavailable (${e.message}); falling back to LocationManager" }; false
+        }
+    }
+
+    /** Fallback path: raw LocationManager, same behavior as before Fused was introduced. */
+    private fun startRawLocationUpdates(lm: LocationManager) {
+        val listener = LocationListener { location -> onLocationUpdate(location) }
+        locationListener = listener
+        val looper = Looper.getMainLooper()
+        try {
             @Suppress("MissingPermission")
             for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
                 if (lm.isProviderEnabled(provider)) {
                     lm.requestLocationUpdates(provider, 1000L, 0f, listener, looper)
-                    DebugLog.i(TAG) { "Requested updates from $provider" }
+                    DebugLog.i(TAG) { "Location: raw LocationManager updates from $provider" }
                 }
             }
         } catch (e: SecurityException) {
             DebugLog.w(TAG) { "Location permission not granted: ${e.message}" }
         }
+    }
+
+    /** Stop whichever location source is active (fused and/or raw). Safe to call repeatedly. */
+    private fun stopLocationUpdates() {
+        fusedCallback?.let { runCatching { fusedClient.removeLocationUpdates(it) } }
+        fusedCallback = null
+        locationListener?.let { listener ->
+            runCatching {
+                (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(listener)
+            }
+        }
+        locationListener = null
     }
 
     private fun onLocationUpdate(location: Location) {
@@ -264,6 +333,10 @@ class ActiveNavViewModel @Inject constructor(
         // and fire alongside real GPS; feeding them to the matcher snapped the rider up to ~1.2 km
         // off-road and broke turn-by-turn. Track the last GPS fix time; if a good GPS fix arrived in
         // the last GPS_FRESH_MS, ignore NETWORK entirely. NETWORK is only used before the first lock.
+        // NOTE: With FusedLocationProviderClient (the primary path) the provider is "fused" — this
+        // filter is then inert BY DESIGN: fused already blends GPS/network internally and hands us
+        // one clean stream, so we accept every fused fix. This gate only bites on the raw-fallback
+        // path. Downstream accuracy gating (reroute) uses `accuracy`, not provider, so it still works.
         val isGps = location.provider == LocationManager.GPS_PROVIDER
         if (isGps) lastGpsFixAtMs = nowMs
         val gpsFresh = lastGpsFixAtMs != 0L && (nowMs - lastGpsFixAtMs) <= GPS_FRESH_MS
@@ -362,12 +435,23 @@ class ActiveNavViewModel @Inject constructor(
         screenReceiver = null
     }
 
-    /** Destination reached: stop location updates + save the ride, keep the arrival UI. */
+    /**
+     * Destination reached: capture the route summary, stop location updates + save the ride, and
+     * LINGER on an arrival screen (map stays centred on the destination, summary card shown) rather
+     * than tearing the whole nav view down instantly — that blank-out was the bad UX. The rider
+     * dismisses via End Navigation; only then do we pop back (see [stopNavigation]).
+     */
     private fun onArrival() {
-        locationListener?.let { listener ->
-            (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(listener)
-        }
-        locationListener = null
+        // Snapshot the ride stats BEFORE stopping the recorder, so the summary card has real numbers.
+        val s = rideRecorder.stats.value
+        val summary = RideSummary(
+            distanceMeters = s.distanceMeters,
+            durationSeconds = s.durationSeconds,
+            avgSpeedKmh = s.avgSpeedKmh,
+        )
+        _navState.value = _navState.value.copy(arrived = true, summary = summary)
+
+        stopLocationUpdates()
         // Release nav's hold on the keep-alive service (only actually stops it if the dash also
         // no longer needs it — see KeepAliveReasons).
         com.recon.dash.dash.DashKeepAliveService.stopFor(
@@ -377,11 +461,12 @@ class ActiveNavViewModel @Inject constructor(
         divergenceTickJob?.cancel()
         divergenceTickJob = null
         voiceManager?.resetTrip()
-        navSessionManager.stopNavigation()
         // Save on the app scope, NOT viewModelScope: the nav screen often finishes right after
         // arrival, cancelling viewModelScope before the DB insert runs and silently losing the ride.
         appScope.launch { rideRecorder.stop() }
-        // navState already carries arrived=true; the screen shows the arrival summary card.
+        // Deliberately DO NOT call navSessionManager.stopNavigation() here — keeping the nav session
+        // alive holds the route geometry + destination on-screen so the arrival view isn't blank.
+        // stopNavigation() runs when the rider taps End Navigation (dismisses the arrival screen).
     }
 
     // ── Google divergence capture (debug-only tuning data) ──
@@ -459,11 +544,7 @@ class ActiveNavViewModel @Inject constructor(
         navTickJob?.cancel()
         divergenceTickJob?.cancel()
         divergenceTickJob = null
-        locationListener?.let { listener ->
-            val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            lm.removeUpdates(listener)
-        }
-        locationListener = null
+        stopLocationUpdates()
         // Release nav's hold on the keep-alive service (only actually stops it if the dash also
         // no longer needs it — see KeepAliveReasons).
         com.recon.dash.dash.DashKeepAliveService.stopFor(

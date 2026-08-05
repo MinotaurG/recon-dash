@@ -87,6 +87,11 @@ class DashViewModel @Inject constructor(
     private var bridge: NavDashBridge? = null
     private var navObserveJob: Job? = null
 
+    // True once we've successfully streamed this connection. Used to tell a benign bike-off
+    // (WiFi vanishes AFTER we were connected → return to Idle quietly) from a real failure
+    // (never connected → show the error). Reset on each fresh connect()/disconnect().
+    @Volatile private var wasEverStreaming = false
+
     fun setMode(mode: DashMode) {
         if (_connectionState.value != DashState.IDLE && _connectionState.value != DashState.ERROR) return
         _mode.value = mode
@@ -95,6 +100,7 @@ class DashViewModel @Inject constructor(
 
     fun connect() {
         if (_connectionState.value != DashState.IDLE && _connectionState.value != DashState.ERROR) return
+        wasEverStreaming = false
         val currentMode = _mode.value
         appendLog("Connecting in ${currentMode.name} mode")
 
@@ -113,7 +119,18 @@ class DashViewModel @Inject constructor(
                 // Gate the dash socket's sends on link state: when WiFi drops (onLost ->
                 // REQUESTING), pause RTP/heartbeat sending so we don't hammer a dead socket ~48x/s
                 // (that produced 40k ENETUNREACH failed-sends + a logcat flood in one ride).
-                session?.setLinkUp(ws.status == WifiConnStatus.CONNECTED)
+                val linkUp = ws.status == WifiConnStatus.CONNECTED
+                session?.setLinkUp(linkUp)
+                // When the bike is switched off, its WiFi vanishes: onLost -> REQUESTING. The
+                // session's own state stays STREAMING (no packet-timeout watchdog), so screens that
+                // read DashConnectionState (ActiveNavScreen's "Dash connected" badge) went stale
+                // while the Dash screen showed the WiFi ERROR — two screens, two truths. Reflect the
+                // link loss app-wide immediately so they agree. We do NOT tear the session down here:
+                // WiFi auto-reconnects for ~8s (RECONNECT_DELAY), and if it comes back the session's
+                // own state collector re-asserts STREAMING. If it doesn't, the WiFi ERROR path fails it.
+                if (!linkUp && com.recon.dash.dash.DashConnectionState.isConnected) {
+                    com.recon.dash.dash.DashConnectionState.update(DashState.CONNECTING)
+                }
                 when (ws.status) {
                     WifiConnStatus.CONNECTED -> {
                         // WiFi CONNECTED can fire more than once (Android 13+ resolves the
@@ -155,8 +172,18 @@ class DashViewModel @Inject constructor(
                         }
                     }
                     WifiConnStatus.ERROR -> {
-                        appendLog("WiFi error -- ${ws.error}")
-                        _connectionState.value = DashState.ERROR
+                        if (wasEverStreaming) {
+                            // We WERE connected and the WiFi is now gone — this is almost always the
+                            // bike being switched off, not a fault. Return to Idle quietly instead of
+                            // flashing a red "could not connect / wrong password" error (bad UX for a
+                            // normal key-off). A fresh connect() starts clean.
+                            appendLog("Dash WiFi gone (bike off?) -- disconnecting")
+                            disconnect()
+                        } else {
+                            // Never got connected → a genuine connect failure; surface it.
+                            appendLog("WiFi error -- ${ws.error}")
+                            _connectionState.value = DashState.ERROR
+                        }
                     }
                     else -> {}
                 }
@@ -217,6 +244,7 @@ class DashViewModel @Inject constructor(
 
     fun disconnect() {
         appendLog("Disconnecting")
+        wasEverStreaming = false
         glyphProbeJob?.cancel(); glyphProbeJob = null
         _glyphProbeRunning.value = false; _glyphProbeCode.value = null
         ThemeState.forceRiding = false
@@ -271,6 +299,7 @@ class DashViewModel @Inject constructor(
                     }
                     DashState.STREAMING -> {
                         appendLog("Streaming active (${mode.name})")
+                        wasEverStreaming = true
                         ThemeState.forceRiding = true
                         DashKeepAliveService.start(context)
                     }

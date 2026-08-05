@@ -27,8 +27,13 @@ import com.recon.dash.ui.theme.OnSurface
 @Composable
 fun ActiveNavScreen(
     onStop: () -> Unit,
+    onAutoCast: () -> Unit = {},
     viewModel: ActiveNavViewModel = hiltViewModel(),
 ) {
+    // Auto-cast to the dash once when this screen appears (RE-app behavior: start nav = show
+    // map on the dash). Idempotent on the dash side, so a no-op if already connected.
+    androidx.compose.runtime.LaunchedEffect(Unit) { onAutoCast() }
+
     val navState by viewModel.navState.collectAsStateWithLifecycle()
     val dashState by viewModel.dashStatus.collectAsStateWithLifecycle()
     val riderPosition by viewModel.riderPosition.collectAsStateWithLifecycle()
@@ -110,14 +115,29 @@ fun ActiveNavScreen(
                 shape = RoundedCornerShape(16.dp),
             ) {
                 if (navState.arrived) {
-                    // Arrival summary — destination reached, navigation ended.
-                    Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
-                        Text("Arrived", color = Color(0xFF7ED957), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    // Arrival summary — destination reached. We LINGER here (map stays on the
+                    // destination) instead of blanking out; rider taps End Navigation to leave.
+                    Column(
+                        modifier = Modifier.padding(20.dp).fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("Navigation Ended", color = Color(0xFF7ED957), fontSize = 22.sp, fontWeight = FontWeight.Bold)
                         Text(
                             text = navState.destinationName,
                             color = OnSurface,
                             fontSize = 14.sp,
                         )
+                        navState.summary?.let { s ->
+                            Spacer(Modifier.height(16.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                            ) {
+                                SummaryStat("Distance", formatSummaryDistance(s.distanceMeters))
+                                SummaryStat("Time", formatSummaryDuration(s.durationSeconds))
+                                SummaryStat("Avg speed", "${s.avgSpeedKmh.toInt()} km/h")
+                            }
+                        }
                     }
                 } else
                 Row(
@@ -171,7 +191,8 @@ fun ActiveNavScreen(
             }
         }
 
-        // Bottom: end navigation
+        // Bottom: on arrival this dismisses the summary; while navigating it ends the trip.
+        // Green "Done" on arrival (positive completion), red "End Navigation" mid-trip.
         Button(
             onClick = onStop,
             modifier = Modifier
@@ -182,12 +203,36 @@ fun ActiveNavScreen(
                 .height(52.dp),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF3A2020),
-                contentColor = Color(0xFFCC6666),
+                containerColor = if (navState.arrived) Color(0xFF14351F) else Color(0xFF3A2020),
+                contentColor = if (navState.arrived) Color(0xFF7ED957) else Color(0xFFCC6666),
             ),
         ) {
-            Text("End Navigation", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (navState.arrived) "Done" else "End Navigation",
+                fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+            )
         }
+    }
+}
+
+@Composable
+private fun SummaryStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = GoldAccent, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = OnSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+    }
+}
+
+private fun formatSummaryDistance(meters: Double): String =
+    if (meters >= 1000) "%.1f km".format(meters / 1000.0) else "${meters.toInt()} m"
+
+private fun formatSummaryDuration(seconds: Long): String {
+    val m = seconds / 60
+    val s = seconds % 60
+    return when {
+        m >= 60 -> "${m / 60}h ${m % 60}m"
+        m > 0 -> "${m}m ${s}s"
+        else -> "${s}s"
     }
 }
 
