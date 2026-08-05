@@ -123,6 +123,10 @@ class NavSessionManager @Inject constructor() {
             cumM = p.traveledMeters, remM = p.remainingMeters, dManM = p.distanceToManeuverM,
             maneuver = p.nextManeuver?.instruction, offRoute = offRoute,
             arrived = p.arrived, speedMps = speedMps,
+            // Glyph ground-truth: the exact byte + type the dash was sent this fix.
+            maneuverType = p.nextManeuver?.type?.name,
+            glyphCode = p.nextManeuver?.dashCode,
+            exitCount = p.nextManeuver?.roundaboutExitCount,
         )
         return snapshot
     }
