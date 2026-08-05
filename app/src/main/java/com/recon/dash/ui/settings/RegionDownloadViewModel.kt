@@ -3,9 +3,10 @@ package com.recon.dash.ui.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.recon.dash.data.DownloadState
-import com.recon.dash.data.Region
 import com.recon.dash.data.RegionManager
+import com.recon.dash.data.RoutingManifest
+import com.recon.dash.data.RoutingPack
+import com.recon.dash.data.RoutingZone
 import com.recon.dash.util.LocationHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -22,80 +23,61 @@ class RegionDownloadViewModel @Inject constructor(
 
     val downloadState = regionManager.downloadState
 
-    private val _installed = MutableStateFlow(regionManager.isGraphInstalled())
-    val installed = _installed.asStateFlow()
+    // The routing manifest (zones -> state packs). Fetched from R2 on open.
+    private val _manifest = MutableStateFlow<RoutingManifest?>(null)
+    val manifest = _manifest.asStateFlow()
 
-    // WHICH region is installed (only one graph fits at a time). Used for per-region "Installed"
-    // status — the old code marked every region installed once ANY graph was present.
-    private val _installedRegionId = MutableStateFlow(regionManager.installedRegionId())
-    val installedRegionId = _installedRegionId.asStateFlow()
+    // Set of installed pack ids (packs stack, so this is a SET, not a single id).
+    private val _installedPacks = MutableStateFlow(regionManager.installedPackIds())
+    val installedPacks = _installedPacks.asStateFlow()
 
-    private val _suggestedRegionId = MutableStateFlow<String?>(null)
-    val suggestedRegionId = _suggestedRegionId.asStateFlow()
+    // The state pack the rider is currently in (for a "download this" nudge), or null.
+    private val _suggestedStateId = MutableStateFlow<String?>(null)
+    val suggestedStateId = _suggestedStateId.asStateFlow()
 
-    // On-disk size of the installed maps (MB), for the "free up space" UI.
     private val _installedSizeMb = MutableStateFlow(regionManager.installedSizeMb())
     val installedSizeMb = _installedSizeMb.asStateFlow()
 
-    // All-India display map (one download, covers the whole country) — separate from routing zones.
+    // All-India display map (one download) — separate from routing packs.
     private val _indiaMapInstalled = MutableStateFlow(regionManager.isIndiaMapInstalled())
     val indiaMapInstalled = _indiaMapInstalled.asStateFlow()
     val indiaMapSizeMb: Int get() = RegionManager.INDIA_MAP_SIZE_MB
 
-    val regions: List<Region> get() = regionManager.availableRegions
-
-    /** Display name of the installed bundle, or null. */
-    val installedRegionName: String?
-        get() = _installedRegionId.value?.let { id -> regions.firstOrNull { it.id == id }?.name }
-
     init {
-        detectSuggestedRegion()
-    }
-
-    fun download(region: Region) {
-        if (region.graphUrl.isBlank()) {
-            return
-        }
         viewModelScope.launch {
-            regionManager.downloadRegion(region, region.graphUrl)
-            refresh()   // recomputes installed + clears the now-installed region's "Suggested" tag
+            _manifest.value = regionManager.manifest()
+            detectSuggested()
         }
     }
 
-    fun clearGraph() {
-        regionManager.clearGraph()
-        refresh()
+    fun downloadPack(pack: RoutingPack) = viewModelScope.launch {
+        regionManager.downloadPack(pack); refresh()
     }
 
-    /** Download the one all-India display map (~2 GB). */
-    fun downloadIndiaMap() {
-        viewModelScope.launch {
-            regionManager.downloadIndiaMap()
-            refresh()
-        }
+    fun downloadZone(zone: RoutingZone) = viewModelScope.launch {
+        regionManager.downloadZone(zone); refresh()
     }
 
-    fun clearIndiaMap() {
-        regionManager.clearIndiaMap()
-        refresh()
+    /** Download the whole country (base + every state). */
+    fun downloadAll() = viewModelScope.launch {
+        regionManager.downloadAll(); refresh()
     }
 
-    private fun detectSuggestedRegion() {
+    fun clearGraph() { regionManager.clearGraph(); refresh() }
+
+    fun downloadIndiaMap() = viewModelScope.launch { regionManager.downloadIndiaMap(); refresh() }
+    fun clearIndiaMap() { regionManager.clearIndiaMap(); refresh() }
+
+    private fun detectSuggested() {
         val loc = LocationHelper.getLastKnown(context) ?: return
-        // "Suggested" = the bundle for the rider's location that is NOT already installed. Point-in
-        // -polygon via RegionManager/RegionGeocoder (single source of truth). Recomputed via
-        // refresh() after a download/clear so the tag clears once the region becomes installed
-        // (was set once at init and never cleared -> the tag persisted after downloading).
-        val here = regionManager.regionForLocation(loc.lat, loc.lng)?.id
-        _suggestedRegionId.value = if (here != null && here != regionManager.installedRegionId()) here else null
+        val here = regionManager.stateIdForLocation(loc.lat, loc.lng)
+        _suggestedStateId.value = here?.takeIf { !regionManager.isPackInstalled(it) }
     }
 
-    /** Recompute installed + suggested state (call after download/clear so the UI reflects reality). */
     private fun refresh() {
-        _installed.value = regionManager.isGraphInstalled()
-        _installedRegionId.value = regionManager.installedRegionId()
+        _installedPacks.value = regionManager.installedPackIds()
         _installedSizeMb.value = regionManager.installedSizeMb()
         _indiaMapInstalled.value = regionManager.isIndiaMapInstalled()
-        detectSuggestedRegion()
+        detectSuggested()
     }
 }

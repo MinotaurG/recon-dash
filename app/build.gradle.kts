@@ -101,6 +101,7 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.maplibre)
+    implementation(libs.commons.compress)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.androidx.security.crypto)
     implementation(libs.room.runtime)

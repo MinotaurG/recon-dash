@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -14,15 +15,32 @@ import java.net.URL
 import javax.inject.Inject
 import javax.inject.Singleton
 
-data class Region(
+/** One downloadable routing pack (a state/UT, or the base skeleton). */
+data class RoutingPack(
     val id: String,
     val name: String,
-    val graphUrl: String,
-    val tilesUrl: String = "",
-    val graphSizeMb: Int,
-    val tilesSizeMb: Int = 0,
+    val sizeMb: Int,
+    val url: String,
+)
+
+/** A zone groups several state/UT packs for the download UI (e.g. South = KA, KL, TN, TG, AP). */
+data class RoutingZone(
+    val id: String,
+    val name: String,
+    val states: List<RoutingPack>,
 ) {
-    val totalSizeMb: Int get() = graphSizeMb + tilesSizeMb
+    val sizeMb: Int get() = states.sumOf { it.sizeMb }
+}
+
+/** Parsed routing manifest (base pack + zones of state packs). Fetched from R2, cached locally. */
+data class RoutingManifest(
+    val version: String,
+    val base: RoutingPack,
+    val zones: List<RoutingZone>,
+) {
+    val allStates: List<RoutingPack> get() = zones.flatMap { it.states }
+    fun state(id: String): RoutingPack? = allStates.firstOrNull { it.id == id }
+    val totalMb: Int get() = base.sizeMb + allStates.sumOf { it.sizeMb }
 }
 
 sealed class DownloadState {
@@ -40,121 +58,215 @@ class RegionManager @Inject constructor(
     companion object {
         private const val TAG = "RegionManager"
         private const val VALHALLA_DIR = "valhalla"
-        private const val TILES_FILE = "valhalla_tiles.tar"
+        // Packs extract loose .gph tiles into this shared dir; Valhalla routes across them (tile_dir).
+        private const val TILE_SUBDIR = "valhalla_tiles"
         private const val BUFFER_SIZE = 8192
         private const val BASE_URL = "https://pub-10f8e863c0f544798593ccdb61ffd2a9.r2.dev/"
+        private const val MANIFEST_URL = "${BASE_URL}routing/v1/manifest.json"
 
-        // One all-India vector map for DISPLAY (~2.1 GB). Downloaded once, covers the whole
-        // country so the map never has holes — decoupled from the per-zone ROUTING graphs
-        // (a zone gives you offline routing; the India map gives you the picture everywhere).
+        // One all-India vector map for DISPLAY (~2 GB). Downloaded once, covers the whole country.
         const val INDIA_MAP_URL = "${BASE_URL}india/india.pmtiles"
-        const val INDIA_MAP_SIZE_MB = 2018   // 2,116,435,030 bytes
+        const val INDIA_MAP_SIZE_MB = 2018
         private const val PMTILES_DIR = "pmtiles"
         private const val PMTILES_FILE = "region.pmtiles"  // TileSource reads this exact name
+
+        private const val BASE_PACK_ID = "base"
     }
 
     private val _downloadState = MutableStateFlow<DownloadState>(DownloadState.Idle)
     val downloadState = _downloadState.asStateFlow()
 
     private val valhallaDir = File(context.filesDir, VALHALLA_DIR)
-    private val tilesFile = File(valhallaDir, TILES_FILE)
-
+    private val tileGraphDir = File(valhallaDir, TILE_SUBDIR)
     private val prefs = context.getSharedPreferences("region_manager", Context.MODE_PRIVATE)
 
-    /** The region id whose tiles are currently installed, or null if none/unknown. */
-    fun installedRegionId(): String? =
-        if (isGraphInstalled()) prefs.getString("installed_region_id", null) else null
+    // ── Manifest (zones + state packs) ──────────────────────────────────────
+
+    @Volatile private var cachedManifest: RoutingManifest? = null
 
     /**
-     * Offline units are ZONAL ROUTING bundles now — Valhalla graph only, NOT map tiles. The map
-     * display comes from the single all-India pmtiles ([INDIA_MAP_URL], downloaded once), so a zone
-     * download is purely "let me route offline here". A bundle covers several states so a rider
-     * routes seamlessly across the states they'd actually cross (Mumbai->Goa, Hyderabad->Bangalore).
-     * Only one routing bundle is installed at a time (see installedRegionId).
-     *
-     * tilesSizeMb is 0 for all zones now — display is the shared India map, not per-zone tiles.
-     * URLs are set once a zone's graph is built + uploaded to R2 (empty = "Coming soon").
+     * Fetch the routing manifest (base + zones of state packs) from R2, cached in memory + on disk.
+     * The manifest is the single source of truth for what's downloadable — adding a state or bumping
+     * a map version is a manifest change on R2, NO app update needed.
      */
-    val availableRegions: List<Region> = listOf(
-        Region("west", "West India (MH, GJ, GA, MP)",
-            graphUrl = "${BASE_URL}west/valhalla_tiles.tar",
-            graphSizeMb = 1536),
-        Region("south", "South India (KA, KL, TN, TG, AP)",
-            graphUrl = "${BASE_URL}south/valhalla_tiles.tar",
-            graphSizeMb = 1434),
-        Region("north", "North India (DL, PB, HR, RJ, UP, UK, HP)", "", "", graphSizeMb = 0),
-        Region("east", "East India (WB, OD, BR, JH, CG)", "", "", graphSizeMb = 0),
-        Region("northeast", "Northeast India (AS + 7 sisters)", "", "", graphSizeMb = 0),
-    )
+    suspend fun manifest(forceRefresh: Boolean = false): RoutingManifest? = withContext(Dispatchers.IO) {
+        if (!forceRefresh) cachedManifest?.let { return@withContext it }
+        val json = runCatching {
+            val conn = (URL(MANIFEST_URL).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15_000; readTimeout = 30_000
+            }
+            conn.inputStream.bufferedReader().use { it.readText() }.also { conn.disconnect() }
+        }.getOrElse { e ->
+            DebugLog.w(TAG) { "Manifest fetch failed: ${e.message}; trying disk cache" }
+            manifestCacheFile.takeIf { it.exists() }?.readText()
+        } ?: return@withContext null
 
-    /**
-     * State id (from [RegionGeocoder]) -> zonal bundle id. This is what turns a GPS fix into the
-     * bundle to download. Kept exhaustive so every geocodable state maps to a zone.
-     */
-    private val stateToZone: Map<String, String> = mapOf(
-        // West
-        "maharashtra" to "west", "goa" to "west", "gujarat" to "west", "madhya_pradesh" to "west",
-        // South
-        "karnataka" to "south", "kerala" to "south", "tamil_nadu" to "south",
-        "telangana" to "south", "andhra_pradesh" to "south",
-        // North
-        "delhi_ncr" to "north", "punjab" to "north", "haryana" to "north", "rajasthan" to "north",
-        "uttar_pradesh" to "north", "uttarakhand" to "north", "himachal" to "north",
-        "jammu_kashmir" to "north", "ladakh" to "north",
-        // East
-        "west_bengal" to "east", "odisha" to "east", "bihar" to "east",
-        "jharkhand" to "east", "chhattisgarh" to "east",
-        // Northeast
-        "assam" to "northeast", "sikkim" to "northeast", "meghalaya" to "northeast",
-        "arunachal" to "northeast", "nagaland" to "northeast",
-        "manipur" to "northeast", "mizoram" to "northeast", "tripura" to "northeast",
-    )
-
-    /** The zonal bundle covering a given state id, or null if that state isn't in any zone. */
-    fun zoneForState(stateId: String): Region? =
-        stateToZone[stateId]?.let { zid -> availableRegions.firstOrNull { it.id == zid } }
-
-    /**
-     * State lookup by coordinate (point-in-polygon via [RegionGeocoder]) — used to suggest which
-     * region to download when a route fails because the rider is outside the installed extract.
-     * Returns null outside covered India / on load failure.
-     */
-    fun regionForLocation(lat: Double, lng: Double): Region? {
-        val stateId = geocoder.regionIdForLocation(lat, lng) ?: return null
-        // Map the state the rider is in to its zonal bundle (the actual downloadable unit).
-        return zoneForState(stateId)
+        runCatching {
+            manifestCacheFile.writeText(json)   // cache for offline
+            parseManifest(json).also { cachedManifest = it }
+        }.getOrElse { e -> DebugLog.e(TAG, { "Manifest parse failed: ${e.message}" }, e); null }
     }
 
-    /** True when a region has real download URLs (i.e. its tiles are built + hosted). */
-    fun isRegionAvailable(region: Region): Boolean = region.graphUrl.isNotBlank()
+    private val manifestCacheFile: File get() = File(context.filesDir, "routing_manifest.json")
 
+    private fun parseManifest(json: String): RoutingManifest {
+        val o = JSONObject(json)
+        val b = o.getJSONObject("base")
+        val base = RoutingPack(BASE_PACK_ID, "Base map (highways)", b.getInt("sizeMb"), b.getString("url"))
+        val zones = mutableListOf<RoutingZone>()
+        val zarr = o.getJSONArray("zones")
+        for (i in 0 until zarr.length()) {
+            val z = zarr.getJSONObject(i)
+            val states = mutableListOf<RoutingPack>()
+            val sarr = z.getJSONArray("states")
+            for (j in 0 until sarr.length()) {
+                val s = sarr.getJSONObject(j)
+                states += RoutingPack(s.getString("id"), s.getString("name"), s.getInt("sizeMb"), s.getString("url"))
+            }
+            zones += RoutingZone(z.getString("id"), z.getString("name"), states)
+        }
+        return RoutingManifest(o.optString("version", "?"), base, zones)
+    }
+
+    // ── Installed-pack tracking (a SET now — packs stack) ───────────────────
+
+    /** Ids of routing packs currently extracted into the shared tile_dir (incl. "base"). */
+    fun installedPackIds(): Set<String> =
+        prefs.getStringSet("installed_packs", emptySet()) ?: emptySet()
+
+    private fun markInstalled(id: String) {
+        prefs.edit().putStringSet("installed_packs", installedPackIds() + id).apply()
+    }
+    private fun markRemoved(id: String) {
+        prefs.edit().putStringSet("installed_packs", installedPackIds() - id).apply()
+    }
+
+    fun isPackInstalled(id: String): Boolean = installedPackIds().contains(id)
+    fun isBaseInstalled(): Boolean = isPackInstalled(BASE_PACK_ID)
+
+    /** True when routing is usable: base pack present (holds the L0/L1 skeleton every route needs). */
     fun isGraphInstalled(): Boolean =
-        tilesFile.exists() && tilesFile.length() > 0
+        isBaseInstalled() && File(tileGraphDir, "0").let { it.isDirectory && (it.listFiles()?.isNotEmpty() == true) }
 
-    private val pmtilesFile: File
-        get() = File(File(context.filesDir, PMTILES_DIR), PMTILES_FILE)
+    // ── State/coordinate → pack (for "download the state you're in" prompts) ──
 
-    /** True once the all-India display map is downloaded. Independent of any routing zone. */
-    fun isIndiaMapInstalled(): Boolean =
-        pmtilesFile.exists() && pmtilesFile.length() > 0
+    /** The state pack id covering a coordinate, or null outside India / on load failure. */
+    fun stateIdForLocation(lat: Double, lng: Double): String? =
+        geocoder.regionIdForLocation(lat, lng)
 
-    /** On-disk size of the installed India display map, in MB (0 if not installed). */
-    fun indiaMapSizeMb(): Int =
-        if (pmtilesFile.exists()) (pmtilesFile.length() / (1024 * 1024)).toInt() else 0
-
-    /** On-disk size of everything installed (India map + routing graph), in MB. */
-    fun installedSizeMb(): Int {
-        var bytes = 0L
-        if (tilesFile.exists()) bytes += tilesFile.length()
-        if (pmtilesFile.exists()) bytes += pmtilesFile.length()
-        return (bytes / (1024 * 1024)).toInt()
+    /** Manifest pack for a coordinate (so a failed route can prompt the exact state to download). */
+    suspend fun packForLocation(lat: Double, lng: Double): RoutingPack? {
+        val sid = stateIdForLocation(lat, lng) ?: return null
+        return manifest()?.state(sid)
     }
 
     /**
-     * Download the one all-India display map (~2.1 GB) into the pmtiles dir. This is the map you
-     * SEE, everywhere — separate from routing zones. Emits progress via [downloadState] and, on
-     * success, [DownloadState.Complete] so the live TileProvider reloads it without an app restart.
+     * Synchronous: the display name of an un-installed state pack covering a location, using only
+     * the CACHED manifest (no network). For non-suspend UI paths (e.g. "you could have this
+     * offline" hint). Returns null if in an installed state, outside India, or manifest not cached.
      */
+    fun uninstalledPackNameForLocation(lat: Double, lng: Double): String? {
+        val sid = stateIdForLocation(lat, lng) ?: return null
+        if (isPackInstalled(sid)) return null
+        return cachedManifest?.state(sid)?.name
+    }
+
+    // ── Downloading packs (stack into the shared tile_dir) ──────────────────
+
+    /**
+     * Download a routing pack and EXTRACT it into the shared tile_dir so it stacks with any
+     * already-installed packs. The base pack is auto-included: routing needs it, so if it's not
+     * installed we fetch it first.
+     */
+    suspend fun downloadPack(pack: RoutingPack): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            // Ensure base is present first (every route needs the L0/L1 skeleton).
+            if (pack.id != BASE_PACK_ID && !isBaseInstalled()) {
+                val base = manifest()?.base
+                    ?: return@withContext Result.failure(IllegalStateException("No manifest for base pack"))
+                extractPack(base)
+            }
+            extractPack(pack)
+            _downloadState.value = DownloadState.Complete(pack.name)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            _downloadState.value = DownloadState.Failed("Download failed: ${e.message}")
+            DebugLog.e(TAG, { "Pack ${pack.id} download failed: ${e.message}" }, e)
+            Result.failure(e)
+        }
+    }
+
+    /** Download a whole zone (all its state packs), base included. */
+    suspend fun downloadZone(zone: RoutingZone): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            manifest()?.base?.let { if (!isBaseInstalled()) extractPack(it) }
+            for (p in zone.states) extractPack(p)
+            _downloadState.value = DownloadState.Complete(zone.name)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            _downloadState.value = DownloadState.Failed("Zone download failed: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /** Download the ENTIRE country — base + every state pack. */
+    suspend fun downloadAll(): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val m = manifest() ?: return@withContext Result.failure(IllegalStateException("No manifest"))
+            extractPack(m.base)
+            for (p in m.allStates) if (!isPackInstalled(p.id)) extractPack(p)
+            _downloadState.value = DownloadState.Complete("All India")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            _downloadState.value = DownloadState.Failed("Download all failed: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /** Download a pack's .tar to cache, untar into the shared tile_dir, record it installed. */
+    private fun extractPack(pack: RoutingPack) {
+        if (isPackInstalled(pack.id)) return
+        _downloadState.value = DownloadState.Downloading(0f, pack.name)
+        tileGraphDir.mkdirs()
+        val tmp = File(context.cacheDir, "pack_${pack.id}.tar")
+        try {
+            downloadFile(pack.url, tmp, pack.sizeMb * 1024L * 1024L, pack.name, 0f, 0.9f)
+            untarInto(tmp, tileGraphDir)
+            markInstalled(pack.id)
+            DebugLog.i(TAG) { "Pack ${pack.id} extracted into tile_dir (${pack.sizeMb}MB)" }
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    /** Untar a routing pack (loose .gph at paths like 0/002/854.gph) into [dest]. */
+    private fun untarInto(tar: File, dest: File) {
+        java.io.BufferedInputStream(java.io.FileInputStream(tar)).use { raw ->
+            val tin = org.apache.commons.compress.archivers.tar.TarArchiveInputStream(raw)
+            var entry = tin.nextEntry
+            val buf = ByteArray(BUFFER_SIZE)
+            while (entry != null) {
+                val out = File(dest, entry.name)
+                if (entry.isDirectory) {
+                    out.mkdirs()
+                } else {
+                    out.parentFile?.mkdirs()
+                    FileOutputStream(out).use { fos ->
+                        var n = tin.read(buf)
+                        while (n != -1) { fos.write(buf, 0, n); n = tin.read(buf) }
+                    }
+                }
+                entry = tin.nextEntry
+            }
+        }
+    }
+
+    // ── India display map (unchanged) ───────────────────────────────────────
+
+    private val pmtilesFile: File get() = File(File(context.filesDir, PMTILES_DIR), PMTILES_FILE)
+    fun isIndiaMapInstalled(): Boolean = pmtilesFile.exists() && pmtilesFile.length() > 0
+    fun indiaMapSizeMb(): Int = if (pmtilesFile.exists()) (pmtilesFile.length() / (1024 * 1024)).toInt() else 0
+
     suspend fun downloadIndiaMap(): Result<Unit> = withContext(Dispatchers.IO) {
         _downloadState.value = DownloadState.Downloading(0f, "India map")
         try {
@@ -170,55 +282,44 @@ class RegionManager @Inject constructor(
             Result.success(Unit)
         } catch (e: Exception) {
             _downloadState.value = DownloadState.Failed("India map download failed: ${e.message}")
-            DebugLog.e(TAG, { "India map download failed: ${e.message}" }, e)
             Result.failure(e)
         }
     }
 
-    /**
-     * Download a zone's Valhalla ROUTING graph (.tar) only. Map display is the shared India map
-     * (see [downloadIndiaMap]), so this no longer fetches per-zone pmtiles. Installing a new zone
-     * replaces the single installed routing graph.
-     */
-    suspend fun downloadRegion(region: Region, url: String): Result<Unit> = withContext(Dispatchers.IO) {
-        _downloadState.value = DownloadState.Downloading(0f, region.name)
+    // ── Sizes / clearing ────────────────────────────────────────────────────
 
-        try {
-            val totalEstimate = region.graphSizeMb * 1024L * 1024L
-
-            // Download Valhalla tile extract (.tar) directly — no unzip needed.
-            valhallaDir.mkdirs()
-            val tmp = File(context.cacheDir, "region_tiles.tar")
-            downloadFile(region.graphUrl, tmp, totalEstimate, region.name, 0f, 1f)
-            if (tilesFile.exists()) tilesFile.delete()
-            tmp.copyTo(tilesFile, overwrite = true)
-            tmp.delete()
-            DebugLog.i(TAG) { "Valhalla routing graph installed for ${region.name} (${tilesFile.length() / 1024 / 1024}MB)" }
-
-            prefs.edit().putString("installed_region_id", region.id).apply()
-            _downloadState.value = DownloadState.Complete(region.name)
-            Result.success(Unit)
-        } catch (e: Exception) {
-            _downloadState.value = DownloadState.Failed("Download failed: ${e.message}")
-            DebugLog.e(TAG, { "Download failed: ${e.message}" }, e)
-            Result.failure(e)
-        }
+    /** On-disk size of everything installed (India map + all routing packs), in MB. */
+    fun installedSizeMb(): Int {
+        var bytes = 0L
+        if (tileGraphDir.exists()) bytes += tileGraphDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        if (pmtilesFile.exists()) bytes += pmtilesFile.length()
+        return (bytes / (1024 * 1024)).toInt()
     }
+
+    /** Delete ALL routing packs (frees the tile_dir). Leaves the India display map intact. */
+    fun clearGraph() {
+        tileGraphDir.deleteRecursively()
+        prefs.edit().remove("installed_packs").apply()
+        _downloadState.value = DownloadState.Idle
+    }
+
+    fun clearIndiaMap() {
+        pmtilesFile.parentFile?.deleteRecursively()
+        _downloadState.value = DownloadState.Idle
+    }
+
+    fun clearAll() { clearGraph(); clearIndiaMap() }
+
+    // ── Download plumbing ────────────────────────────────────────────────────
 
     private fun downloadFile(
-        url: String,
-        destFile: File,
-        totalEstimate: Long,
-        regionName: String,
-        progressStart: Float,
-        progressEnd: Float,
+        url: String, destFile: File, totalEstimate: Long,
+        regionName: String, progressStart: Float, progressEnd: Float,
     ) {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 15_000
-            readTimeout = 60_000
+            connectTimeout = 15_000; readTimeout = 60_000
         }
         val fileSize = conn.contentLengthLong.takeIf { it > 0 } ?: (totalEstimate / 2)
-
         conn.inputStream.use { input ->
             FileOutputStream(destFile).use { output ->
                 val buffer = ByteArray(BUFFER_SIZE)
@@ -234,28 +335,5 @@ class RegionManager @Inject constructor(
             }
         }
         conn.disconnect()
-    }
-
-    /**
-     * Delete the installed ROUTING graph only (frees ~1.5 GB). Leaves the India display map intact
-     * — clearing a routing zone shouldn't nuke the 2 GB map you'd have to re-download. Use
-     * [clearIndiaMap] to remove the display map, or [clearAll] for everything.
-     */
-    fun clearGraph() {
-        valhallaDir.deleteRecursively()
-        prefs.edit().remove("installed_region_id").apply()
-        _downloadState.value = DownloadState.Idle
-    }
-
-    /** Delete the all-India display map (frees ~2 GB). Leaves any routing graph intact. */
-    fun clearIndiaMap() {
-        pmtilesFile.parentFile?.deleteRecursively()
-        _downloadState.value = DownloadState.Idle
-    }
-
-    /** Delete ALL installed offline data (routing graph + India map). */
-    fun clearAll() {
-        clearGraph()
-        clearIndiaMap()
     }
 }

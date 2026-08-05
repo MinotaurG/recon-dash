@@ -140,15 +140,15 @@ class RoutePreviewViewModel @Inject constructor(
                 }
                 is RouterResult.Failure -> {
                     allRoutes = emptyList()
-                    // Both offline AND online failed. If the origin is in a region we don't have
-                    // installed, offer to download it (the durable offline fix); otherwise a plain error.
-                    val region = regionManager.regionForLocation(originLat, originLng)
-                    if (region != null && region.id != regionManager.installedRegionId()) {
+                    // Both offline AND online failed. If the origin is in a state we don't have
+                    // installed, offer to download that state pack (the durable offline fix).
+                    val pack = regionManager.packForLocation(originLat, originLng)
+                    if (pack != null && !regionManager.isPackInstalled(pack.id)) {
                         _state.value = RoutePreviewState.RegionMissing(
-                            regionId = region.id,
-                            regionName = region.name,
-                            sizeMb = region.totalSizeMb,
-                            available = regionManager.isRegionAvailable(region),
+                            regionId = pack.id,
+                            regionName = pack.name,
+                            sizeMb = pack.sizeMb,
+                            available = true,   // manifest-listed packs are always downloadable
                         )
                     } else {
                         val msg = when (val err = result.error) {
@@ -193,12 +193,9 @@ class RoutePreviewViewModel @Inject constructor(
             avoidTolls = avoidTolls,
             avoidHighways = avoidHighways,
             isOnlineRoute = usedOnlineRouting,
-            // Offer the offline download when this origin's bundle isn't the installed one — i.e.
-            // you're navigating a region you don't have offline. Independent of whether routing
-            // happened to succeed online; the point is "you could have this offline."
-            downloadableRegionName = regionManager.regionForLocation(originLat, originLng)
-                ?.takeIf { it.id != regionManager.installedRegionId() && regionManager.isRegionAvailable(it) }
-                ?.name,
+            // Offer the offline download when this origin's state pack isn't installed — i.e.
+            // you're navigating a state you don't have offline. "You could have this offline."
+            downloadableRegionName = regionManager.uninstalledPackNameForLocation(originLat, originLng),
         )
     }
 
