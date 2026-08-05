@@ -47,10 +47,8 @@ class Router(private val context: Context) {
     companion object {
         private const val TAG = "Router"
         private const val TILES_DIR_NAME = "valhalla"
-        // Per-state packs extract loose .gph into this dir and stack...
-        private const val TILE_SUBDIR = "valhalla_tiles"
-        // ...then get assembled into this ONE tar, which is what the .so actually routes from
-        // (tile_extract, mmap'd). The loose tile_dir path crashes the mobile .so; a proper tar works.
+        // The ONE pre-assembled all-India tar the .so routes from (tile_extract, mmap'd). The loose
+        // tile_dir path crashes the mobile .so; a proper tar works.
         private const val TILE_EXTRACT_NAME = "valhalla_tiles.tar"
         private const val ROUTE_TIMEOUT_MS = 8_000L
     }
@@ -64,11 +62,7 @@ class Router(private val context: Context) {
     val tilesDir: File
         get() = File(context.filesDir, TILES_DIR_NAME)
 
-    /** The shared tile directory packs extract into (filesDir/valhalla/valhalla_tiles). */
-    val tileGraphDir: File
-        get() = File(tilesDir, TILE_SUBDIR)
-
-    /** The assembled routable extract the .so reads (filesDir/valhalla/valhalla_tiles.tar). */
+    /** The all-India routable extract the .so reads (filesDir/valhalla/valhalla_tiles.tar). */
     val tileExtractFile: File
         get() = File(tilesDir, TILE_EXTRACT_NAME)
 
