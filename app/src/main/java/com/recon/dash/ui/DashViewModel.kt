@@ -24,6 +24,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 import javax.inject.Inject
 
 @HiltViewModel
@@ -510,8 +511,16 @@ class DashViewModel @Inject constructor(
      * AND 0x3C — a code the real RE app was observed sending in a captured route card
      * (see DashCommands template + OpenDash notes), our best lead for a real glyph.
      * Neither OpenDash nor us has verified anything beyond 0x0B; this sweep is how we do it.
+     *
+     * SELF-LABELING: unlike the earlier in-memory-only marker, every code is written to a CSV
+     * on disk (filesDir/glyph-probe/probe-<startMs>.csv) AND emitted as a distinctive greppable
+     * "GLYPHMAP" logcat line. That gives an exact code<->timestamp anchor to align against a
+     * video/photo capture afterwards, with NO alignment guesswork:
+     *   - Video: elapsedMs (from the CSV) maps straight to the video second.
+     *   - Photos: the wall-clock column aligns with photo EXIF time.
+     *   - Live:  `adb logcat -s DashViewModel | grep GLYPHMAP` captures it in real time.
      */
-    fun startGlyphProbe(from: Int = 0x00, to: Int = 0x40, dwellMs: Long = 4_000L) {
+    fun startGlyphProbe(from: Int = 0x00, to: Int = 0x40, dwellMs: Long = 5_000L) {
         val sess = session
         if (sess == null || _connectionState.value != DashState.STREAMING) {
             appendLog("Glyph probe needs an active streaming session — connect first")
@@ -520,7 +529,19 @@ class DashViewModel @Inject constructor(
         if (glyphProbeJob?.isActive == true) return
         glyphProbeJob = viewModelScope.launch {
             _glyphProbeRunning.value = true
-            appendLog("GLYPH PROBE start ${hex(from)}..${hex(to)} @ ${dwellMs}ms — watch the dash")
+            // One CSV per run; header documents the columns. Failure to open the file must NOT
+            // abort the probe (the logcat GLYPHMAP line is a second, independent record).
+            val startWall = System.currentTimeMillis()
+            val startElapsed = SystemClock.elapsedRealtime()
+            val csv = runCatching {
+                val dir = File(context.filesDir, "glyph-probe").apply { mkdirs() }
+                File(dir, "probe-$startWall.csv").also {
+                    it.appendText("code_dec,code_hex,elapsed_ms,wall_iso,dwell_ms\n")
+                }
+            }.getOrNull()
+            val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", java.util.Locale.US)
+            appendLog("GLYPH PROBE start ${hex(from)}..${hex(to)} @ ${dwellMs}ms" +
+                (csv?.let { " -> ${it.name}" } ?: " (csv open failed; logcat GLYPHMAP still active)"))
             try {
                 for (code in from..to) {
                     if (!isActive || session == null) break
@@ -532,10 +553,15 @@ class DashViewModel @Inject constructor(
                         primaryDist = 500, primaryUnit = DashCommands.NAV_UNIT_METERS,
                         totalDist = 5000, totalUnit = DashCommands.NAV_UNIT_METERS,
                     )
-                    appendLog("GLYPH ${hex(code)} (${code}) — photograph now")
+                    val elapsed = SystemClock.elapsedRealtime() - startElapsed
+                    val wall = iso.format(java.util.Date())
+                    // Greppable one-liner for live `adb logcat -s DashViewModel | grep GLYPHMAP`.
+                    DebugLog.i(TAG) { "GLYPHMAP code=$code hex=${hex(code)} elapsedMs=$elapsed wall=$wall" }
+                    csv?.let { runCatching { it.appendText("$code,${hex(code)},$elapsed,$wall,$dwellMs\n") } }
+                    appendLog("GLYPH ${hex(code)} (${code}) @ ${elapsed}ms — photograph now")
                     delay(dwellMs)
                 }
-                appendLog("GLYPH PROBE done")
+                appendLog("GLYPH PROBE done" + (csv?.let { " — saved ${it.name}" } ?: ""))
             } finally {
                 _glyphProbeRunning.value = false
                 _glyphProbeCode.value = null

@@ -145,8 +145,10 @@ fun TestScreen(
             Text("Telemetry Lab", fontSize = 14.sp)
         }
 
-        // Glyph probe: sweeps maneuver codes 0x00..0x2F to the dash (4s each) so we can
-        // photograph each turn glyph and build the code map. Only useful while streaming.
+        // Glyph probe: sweeps maneuver codes 0x00..0x40 to the dash (5s each) so we can
+        // photograph each turn glyph and build the code map. Self-labeling: writes a CSV
+        // (filesDir/glyph-probe/) + greppable GLYPHMAP logcat lines to anchor code<->frame
+        // exactly, no alignment guesswork. Only useful while streaming.
         if (state == DashState.STREAMING) {
             Spacer(Modifier.height(12.dp))
             OutlinedButton(
