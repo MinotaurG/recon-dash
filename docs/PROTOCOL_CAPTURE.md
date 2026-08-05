@@ -40,9 +40,18 @@ navigating a route with varied turns (left, right, slight, sharp, roundabout exi
 U-turn, arrive) and record **which byte code precedes each glyph change** on the
 dash. This is phone→dash, so no decryption barrier beyond the WPA layer (PSK known).
 
-Cross-check with an **active probe** — no RE app needed for this half: from our own
-app, send maneuver codes `0x00..0x2F` one at a time and photograph which glyph the
-TFT shows. The sniff is the reference; the probe is the confirmation. Do both.
+**Active probe (primary path — no RE app, no sniff strictly needed):** from our own app,
+send maneuver codes `0x00..0x40` one at a time and record which glyph the TFT shows. The
+probe is now **self-labeling** (git `480ca5b`+): it writes `filesDir/glyph-probe/probe-<startMs>.csv`
+(`code_dec,code_hex,elapsed_ms,wall_iso,dwell_ms`) and greppable `GLYPHMAP` logcat lines, so a
+video/photo capture aligns to codes EXACTLY via `elapsed_ms` — no guesswork.
+
+> Prior attempt (2026-08-04 video, git before self-label): captured a clean glyph catalog but
+> the "which code now" marker was in-memory only and lost, so glyphs were ordered but NOT
+> code-anchored. The self-labeling probe fixes exactly this. Re-run it for the verified map.
+
+When we ALSO sniff our own WPA2 session during the probe, the maneuver packets are captured
+decryptable too — giving `code -> wire bytes -> rendered glyph` all tied together.
 
 Fill in:
 
@@ -200,8 +209,19 @@ WPA2-PSK for a client connection. The Galaxy Tab S9 SE (One UI 8.5) behaves the 
 3. **RE-app WPA2 capture** only via a legacy WPA3-incapable client (old Android ≤9 /
    old laptop), which will connect PSK. Low priority given (1)+(2) cover our needs.
 
+## Observation records (clean-room artifacts)
+
+Each capture session gets a dated, self-contained dir under `/captures/<date>-<tag>/`
+(**gitignored** — never in the public repo). It holds the raw `.pcap`, the glyph-probe CSV,
+session notes, and the derived **facts-only `SPEC.md`**. The SPEC is the clean-room
+deliverable that a from-spec `dash/` rewrite is built against. See `docs/LEGAL_NOTES.md`.
+
+- `captures/2026-08-05-bench-ownapp/` — first own-app WPA2 bench session (glyph map +
+  own auth handshake). Self-labeling probe (git `480ca5b`+) writes `probe-<startMs>.csv`.
+
 ## Capture log
 
 | Date | File | Channel | Handshake caught? | Notes |
 |------|------|---------|-------------------|-------|
 | 2026-08-03 | c889f3b67fa9_ch2_...pcap | 2 | Yes (4/4) | Undecryptable — phone used WPA3/SAE. See blocker above. |
+| 2026-08-05 | captures/2026-08-05-bench-ownapp/ | TBD | TBD | Own-app WPA2 (decryptable) + self-labeling glyph probe. Bench, no ride. |
