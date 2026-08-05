@@ -46,6 +46,7 @@ fun RegionDownloadScreen(
     val installedSizeMb by viewModel.installedSizeMb.collectAsStateWithLifecycle()
     val suggestedStateId by viewModel.suggestedStateId.collectAsStateWithLifecycle()
     val indiaMapInstalled by viewModel.indiaMapInstalled.collectAsStateWithLifecycle()
+    val mapUpdateAvailable by viewModel.mapUpdateAvailable.collectAsStateWithLifecycle()
 
     val busy = downloadState is DownloadState.Downloading
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
@@ -109,7 +110,7 @@ fun RegionDownloadScreen(
 
         // India base map (display)
         SectionLabel("Base map (display)")
-        IndiaMapCard(indiaMapInstalled, viewModel.indiaMapSizeMb, busy,
+        IndiaMapCard(indiaMapInstalled, mapUpdateAvailable, viewModel.indiaMapSizeMb, busy,
             onDownload = { viewModel.downloadIndiaMap() }, onDelete = { viewModel.clearIndiaMap() })
         Spacer(Modifier.height(20.dp))
 
@@ -181,7 +182,7 @@ private fun fmtSize(mb: Int): String =
     if (mb >= 1024) "%.1f GB".format(mb / 1024f) else "$mb MB"
 
 @Composable
-private fun IndiaMapCard(installed: Boolean, sizeMb: Int, busy: Boolean, onDownload: () -> Unit, onDelete: () -> Unit) {
+private fun IndiaMapCard(installed: Boolean, updateAvailable: Boolean, sizeMb: Int, busy: Boolean, onDownload: () -> Unit, onDelete: () -> Unit) {
     var confirm by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(DarkSurface)
@@ -189,10 +190,14 @@ private fun IndiaMapCard(installed: Boolean, sizeMb: Int, busy: Boolean, onDownl
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(Modifier.weight(1f)) {
-            Text("India map", color = OnSurface, fontSize = 14.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("India map", color = OnSurface, fontSize = 14.sp)
+                if (updateAvailable) Text("Update available", color = GoldAccent, fontSize = 10.sp)
+            }
             Text("~${fmtSize(sizeMb)} · shown on the dash everywhere", color = OnSurface.copy(alpha = 0.4f), fontSize = 12.sp)
         }
         when {
+            updateAvailable && !busy -> TextButton(onClick = onDownload) { Text("Update", color = GoldAccent, fontSize = 13.sp) }
             installed -> Text("Delete", color = Color(0xFFEF4444), fontSize = 13.sp, modifier = Modifier.clickable { confirm = true })
             busy -> Text("…", color = OnSurface.copy(alpha = 0.4f), fontSize = 13.sp)
             else -> TextButton(onClick = onDownload) { Text("Download", color = GoldAccent, fontSize = 13.sp) }

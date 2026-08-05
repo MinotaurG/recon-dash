@@ -41,11 +41,17 @@ class RegionDownloadViewModel @Inject constructor(
     // All-India display map (one download) — separate from routing packs.
     private val _indiaMapInstalled = MutableStateFlow(regionManager.isIndiaMapInstalled())
     val indiaMapInstalled = _indiaMapInstalled.asStateFlow()
-    val indiaMapSizeMb: Int get() = RegionManager.INDIA_MAP_SIZE_MB
+    // Size from the manifest when available, else the baked-in fallback.
+    val indiaMapSizeMb: Int get() = _manifest.value?.map?.sizeMb ?: RegionManager.INDIA_MAP_SIZE_MB
+
+    // True when a newer display-map version exists on R2 than what's installed → show "Update".
+    private val _mapUpdateAvailable = MutableStateFlow(false)
+    val mapUpdateAvailable = _mapUpdateAvailable.asStateFlow()
 
     init {
         viewModelScope.launch {
             _manifest.value = regionManager.manifest()
+            _mapUpdateAvailable.value = regionManager.mapUpdateAvailable()
             detectSuggested()
         }
     }
@@ -78,6 +84,7 @@ class RegionDownloadViewModel @Inject constructor(
         _installedPacks.value = regionManager.installedPackIds()
         _installedSizeMb.value = regionManager.installedSizeMb()
         _indiaMapInstalled.value = regionManager.isIndiaMapInstalled()
+        _mapUpdateAvailable.value = regionManager.mapUpdateAvailable()
         detectSuggested()
     }
 }

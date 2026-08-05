@@ -32,9 +32,13 @@ data class RoutingZone(
     val sizeMb: Int get() = states.sumOf { it.sizeMb }
 }
 
-/** Parsed routing manifest (base pack + zones of state packs). Fetched from R2, cached locally. */
+/** The all-India display map entry (pmtiles), versioned independently of routing. */
+data class MapInfo(val version: String, val url: String, val sizeMb: Int)
+
+/** Parsed manifest: display map + routing (base pack + zones of state packs). From R2, cached. */
 data class RoutingManifest(
-    val version: String,
+    val map: MapInfo,
+    val routingVersion: String,
     val base: RoutingPack,
     val zones: List<RoutingZone>,
 ) {
@@ -111,10 +115,13 @@ class RegionManager @Inject constructor(
 
     private fun parseManifest(json: String): RoutingManifest {
         val o = JSONObject(json)
-        val b = o.getJSONObject("base")
+        val mo = o.getJSONObject("map")
+        val map = MapInfo(mo.optString("version", "?"), mo.getString("url"), mo.getInt("sizeMb"))
+        val ro = o.getJSONObject("routing")
+        val b = ro.getJSONObject("base")
         val base = RoutingPack(BASE_PACK_ID, "Base map (highways)", b.getInt("sizeMb"), b.getString("url"))
         val zones = mutableListOf<RoutingZone>()
-        val zarr = o.getJSONArray("zones")
+        val zarr = ro.getJSONArray("zones")
         for (i in 0 until zarr.length()) {
             val z = zarr.getJSONObject(i)
             val states = mutableListOf<RoutingPack>()
@@ -125,7 +132,7 @@ class RegionManager @Inject constructor(
             }
             zones += RoutingZone(z.getString("id"), z.getString("name"), states)
         }
-        return RoutingManifest(o.optString("version", "?"), base, zones)
+        return RoutingManifest(map, ro.optString("version", "?"), base, zones)
     }
 
     // ── Installed-pack tracking (a SET now — packs stack) ───────────────────
@@ -270,20 +277,37 @@ class RegionManager @Inject constructor(
     suspend fun downloadIndiaMap(): Result<Unit> = withContext(Dispatchers.IO) {
         _downloadState.value = DownloadState.Downloading(0f, "India map")
         try {
+            // Prefer the manifest's map url/size/version (code-free updates); fall back to the
+            // baked-in constant if the manifest can't be fetched.
+            val mapInfo = manifest()?.map
+            val url = mapInfo?.url ?: INDIA_MAP_URL
+            val sizeMb = mapInfo?.sizeMb ?: INDIA_MAP_SIZE_MB
             val pmtilesDir = File(context.filesDir, PMTILES_DIR).apply { mkdirs() }
             val dest = File(pmtilesDir, PMTILES_FILE)
             val tmp = File(context.cacheDir, "india.pmtiles.part")
-            downloadFile(INDIA_MAP_URL, tmp, INDIA_MAP_SIZE_MB * 1024L * 1024L, "India map", 0f, 1f)
+            downloadFile(url, tmp, sizeMb * 1024L * 1024L, "India map", 0f, 1f)
             if (dest.exists()) dest.delete()
             tmp.copyTo(dest, overwrite = true)
             tmp.delete()
-            DebugLog.i(TAG) { "India map installed (${dest.length() / 1024 / 1024}MB)" }
+            // Record the installed map version so we can later show "map update available".
+            mapInfo?.version?.let { prefs.edit().putString("installed_map_version", it).apply() }
+            DebugLog.i(TAG) { "India map installed (${dest.length() / 1024 / 1024}MB, v${mapInfo?.version})" }
             _downloadState.value = DownloadState.Complete("India map")
             Result.success(Unit)
         } catch (e: Exception) {
             _downloadState.value = DownloadState.Failed("India map download failed: ${e.message}")
             Result.failure(e)
         }
+    }
+
+    /** Installed display-map version, or null if never downloaded. */
+    fun installedMapVersion(): String? = prefs.getString("installed_map_version", null)
+
+    /** True if the manifest's map version differs from what's installed (an update is available). */
+    fun mapUpdateAvailable(): Boolean {
+        val installed = installedMapVersion() ?: return false  // not installed = "download", not "update"
+        val latest = cachedManifest?.map?.version ?: return false
+        return isIndiaMapInstalled() && installed != latest
     }
 
     // ── Sizes / clearing ────────────────────────────────────────────────────
