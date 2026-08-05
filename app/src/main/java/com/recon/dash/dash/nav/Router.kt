@@ -47,10 +47,11 @@ class Router(private val context: Context) {
     companion object {
         private const val TAG = "Router"
         private const val TILES_DIR_NAME = "valhalla"
-        // Loose-tile directory (base + per-state packs extract here and STACK). We route from
-        // this dir via tile_dir, not a single .tar — that's what lets downloaded state packs
-        // combine into one routable graph. See ValhallaConfig.
+        // Per-state packs extract loose .gph into this dir and stack...
         private const val TILE_SUBDIR = "valhalla_tiles"
+        // ...then get assembled into this ONE tar, which is what the .so actually routes from
+        // (tile_extract, mmap'd). The loose tile_dir path crashes the mobile .so; a proper tar works.
+        private const val TILE_EXTRACT_NAME = "valhalla_tiles.tar"
         private const val ROUTE_TIMEOUT_MS = 8_000L
     }
 
@@ -67,18 +68,16 @@ class Router(private val context: Context) {
     val tileGraphDir: File
         get() = File(tilesDir, TILE_SUBDIR)
 
-    /**
-     * True when the routing graph is usable — the base pack MUST be present (it holds the L0/L1
-     * highway skeleton every route needs). We check for level-0 tiles as the base marker.
-     */
-    fun graphExists(): Boolean {
-        val level0 = File(tileGraphDir, "0")
-        return level0.isDirectory && (level0.listFiles()?.isNotEmpty() == true)
-    }
+    /** The assembled routable extract the .so reads (filesDir/valhalla/valhalla_tiles.tar). */
+    val tileExtractFile: File
+        get() = File(tilesDir, TILE_EXTRACT_NAME)
+
+    /** True when the routable extract exists (assembled from installed packs). */
+    fun graphExists(): Boolean = tileExtractFile.exists() && tileExtractFile.length() > 0
 
     /**
-     * Reload the graph after packs are added/removed. The native reader indexes the tile_dir at
-     * load; a fresh ValhallaKotlin picks up newly-extracted packs. Safe to call repeatedly.
+     * Reload the graph after packs are added/removed and the extract has been rebuilt. A fresh
+     * ValhallaKotlin re-mmaps the new tar. Safe to call repeatedly.
      */
     suspend fun reload(): Result<Unit> = withContext(Dispatchers.IO) {
         mutex.withLock { isReady = false; engine = null; configPath = null }
@@ -90,16 +89,16 @@ class Router(private val context: Context) {
             if (isReady) return@withContext Result.success(Unit)
 
             if (!graphExists()) {
-                val msg = "Routing tiles not found at ${tileGraphDir.absolutePath} (base pack missing)"
+                val msg = "Routing extract not found at ${tileExtractFile.absolutePath}"
                 DebugLog.w(TAG) { msg }
                 return@withContext Result.failure(IllegalStateException(msg))
             }
 
             try {
-                configPath = ValhallaConfig.write(context, tileGraphDir.absolutePath)
+                configPath = ValhallaConfig.write(context, tileExtractFile.absolutePath)
                 engine = ValhallaKotlin()
                 isReady = true
-                DebugLog.i(TAG) { "Valhalla loaded from tile_dir ${tileGraphDir.absolutePath}" }
+                DebugLog.i(TAG) { "Valhalla loaded from extract ${tileExtractFile.absolutePath} (${tileExtractFile.length()/1024/1024}MB)" }
                 Result.success(Unit)
             } catch (e: Exception) {
                 DebugLog.e(TAG, { "Failed to load tiles: ${e.message}" }, e)

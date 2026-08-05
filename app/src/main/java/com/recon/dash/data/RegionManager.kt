@@ -81,7 +81,8 @@ class RegionManager @Inject constructor(
     val downloadState = _downloadState.asStateFlow()
 
     private val valhallaDir = File(context.filesDir, VALHALLA_DIR)
-    private val tileGraphDir = File(valhallaDir, TILE_SUBDIR)
+    private val tileGraphDir = File(valhallaDir, TILE_SUBDIR)      // loose packs extract here
+    private val tileExtractFile = File(valhallaDir, "valhalla_tiles.tar")  // assembled routable tar
     private val prefs = context.getSharedPreferences("region_manager", Context.MODE_PRIVATE)
 
     // ── Manifest (zones + state packs) ──────────────────────────────────────
@@ -151,9 +152,9 @@ class RegionManager @Inject constructor(
     fun isPackInstalled(id: String): Boolean = installedPackIds().contains(id)
     fun isBaseInstalled(): Boolean = isPackInstalled(BASE_PACK_ID)
 
-    /** True when routing is usable: base pack present (holds the L0/L1 skeleton every route needs). */
+    /** True when routing is usable: the assembled extract exists (built from installed packs). */
     fun isGraphInstalled(): Boolean =
-        isBaseInstalled() && File(tileGraphDir, "0").let { it.isDirectory && (it.listFiles()?.isNotEmpty() == true) }
+        isBaseInstalled() && tileExtractFile.exists() && tileExtractFile.length() > 0
 
     // ── State/coordinate → pack (for "download the state you're in" prompts) ──
 
@@ -194,6 +195,7 @@ class RegionManager @Inject constructor(
                 extractPack(base)
             }
             extractPack(pack)
+            rebuildExtract()
             _downloadState.value = DownloadState.Complete(pack.name)
             Result.success(Unit)
         } catch (e: Exception) {
@@ -208,6 +210,7 @@ class RegionManager @Inject constructor(
         try {
             manifest()?.base?.let { if (!isBaseInstalled()) extractPack(it) }
             for (p in zone.states) extractPack(p)
+            rebuildExtract()
             _downloadState.value = DownloadState.Complete(zone.name)
             Result.success(Unit)
         } catch (e: Exception) {
@@ -222,12 +225,25 @@ class RegionManager @Inject constructor(
             val m = manifest() ?: return@withContext Result.failure(IllegalStateException("No manifest"))
             extractPack(m.base)
             for (p in m.allStates) if (!isPackInstalled(p.id)) extractPack(p)
+            rebuildExtract()
             _downloadState.value = DownloadState.Complete("All India")
             Result.success(Unit)
         } catch (e: Exception) {
             _downloadState.value = DownloadState.Failed("Download all failed: ${e.message}")
             Result.failure(e)
         }
+    }
+
+    /**
+     * Assemble the loose tiles in the shared dir into ONE valhalla_tiles.tar (the mmap'd extract
+     * the .so routes from). Called after packs are added/removed. Emits a brief 'assembling' status
+     * since it's a heavy pass over all installed tiles.
+     */
+    private fun rebuildExtract() {
+        _downloadState.value = DownloadState.Downloading(0.98f, "Preparing routes")
+        val n = com.valhalla.valhalla.ValhallaExtractBuilder.build(tileGraphDir, tileExtractFile)
+        if (n < 0) throw IllegalStateException("Failed to assemble routing extract")
+        DebugLog.i(TAG) { "Assembled routing extract: $n tiles -> ${tileExtractFile.length() / 1024 / 1024}MB" }
     }
 
     /** Download a pack's .tar to cache, untar into the shared tile_dir, record it installed. */
@@ -320,9 +336,10 @@ class RegionManager @Inject constructor(
         return (bytes / (1024 * 1024)).toInt()
     }
 
-    /** Delete ALL routing packs (frees the tile_dir). Leaves the India display map intact. */
+    /** Delete ALL routing packs + the assembled extract. Leaves the India display map intact. */
     fun clearGraph() {
         tileGraphDir.deleteRecursively()
+        tileExtractFile.delete()
         prefs.edit().remove("installed_packs").apply()
         _downloadState.value = DownloadState.Idle
     }
