@@ -198,8 +198,16 @@ class ActiveNavViewModel @Inject constructor(
                 voiceManager?.resetTrip()
                 // Reroute swaps the route (and resets the progress cursor) WITHOUT re-emitting the
                 // "nav started" event; only the initial route starts navigation.
-                if (isReroute) navSessionManager.updateRoute(result.route)
-                else navSessionManager.startNavigation(result.route, destName)
+                if (isReroute) {
+                    navSessionManager.updateRoute(result.route)
+                    // updateRoute() nulls the progress snapshot and the new engine won't emit
+                    // traveled/ahead geometry until the NEXT GPS fix (~1s away). The nav map draws
+                    // those two flows, so without this the whole route line vanishes for that gap —
+                    // the "map goes black during a detour" bug. Seed the map immediately: the entire
+                    // new route is "ahead" (cursor reset to 0), nothing traveled yet.
+                    _aheadGeometry.value = result.route.geometry
+                    _travelledGeometry.value = emptyList()
+                } else navSessionManager.startNavigation(result.route, destName)
                 val r = result.route
                 val firstManeuver = r.maneuvers.firstOrNull { it.type != com.recon.dash.dash.nav.ManeuverType.DEPART }
                 _navState.value = NavDisplayState(
