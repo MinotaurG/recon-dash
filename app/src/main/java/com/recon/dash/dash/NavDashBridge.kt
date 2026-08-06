@@ -31,6 +31,7 @@ class NavDashBridge(
     }
 
     private var mediaJob: Job? = null
+    private var callJob: Job? = null
     private var currentRoute: Route? = null
 
     fun startMediaForwarding() {
@@ -44,12 +45,21 @@ class NavDashBridge(
                 }
             }
         }
+        // Incoming-call → dash Phone card. The dash-side (updateCall → 05 22) already existed but
+        // was never driven; CallStateListener is the phone-side event source.
+        callJob?.cancel()
+        callJob = scope.launch {
+            com.recon.dash.media.CallStateListener.incomingCaller.collectLatest { caller ->
+                session.updateCall(caller)
+            }
+        }
     }
 
     fun stopMediaForwarding() {
-        mediaJob?.cancel()
-        mediaJob = null
+        mediaJob?.cancel(); mediaJob = null
+        callJob?.cancel(); callJob = null
         session.updateNowPlaying(null, "", "")
+        session.updateCall(null)
     }
 
     fun startNavigation(route: Route, destinationName: String) {

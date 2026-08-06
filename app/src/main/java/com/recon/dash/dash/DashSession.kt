@@ -78,6 +78,16 @@ class DashSession(
         callerName = caller?.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * Send a raw packet on the control socket, off the session scope. ADDITIVE — used only by the
+     * screen-focus probe (DashViewModel) to test candidate carousel-switch commands. Does not touch
+     * auth/projection/route-card/RTP paths. No-op if not connected.
+     */
+    fun sendRaw(packet: ByteArray) {
+        val sock = socket ?: return
+        scope.launch(Dispatchers.IO) { runCatching { sock.send(packet) } }
+    }
+
     // Live nav-info pushed to the dash bubble at ~1 Hz (set by NavEngine output).
     @Volatile private var navManeuver = DashCommands.NAV_MANEUVER_CONTINUE
     @Volatile private var navPrimaryDist = 0
@@ -416,9 +426,12 @@ class DashSession(
                 TelemetryBus.emit(pkt0C)
                 continue
             }
-            // Log every OTHER incoming event (e.g. joystick in nav view, or the dash's
-            // 'exit navigation' selection) in FULL so its TLV can be identified + mapped.
-            DebugLog.i(TAG) { "DASH EVENT type=0x%02X sub=0x%02X (%dB) val=%s"
+            // Log every OTHER incoming event in FULL so its TLV can be identified + mapped.
+            // SCREENEVT: any dash->app event that ISN'T a known ack/telemetry/auth/joystick is a
+            // candidate "the active carousel screen changed" announcement. We tag it distinctly so
+            // that, while joysticking Home->Phone->Media->Nav, one `grep SCREENEVT` shows whether
+            // the dash tells us its current screen (needed to auto-focus Nav/Phone/Media cards).
+            DebugLog.i(TAG) { "SCREENEVT type=0x%02X sub=0x%02X (%dB) val=%s"
                 .format(tlv.type, tlv.sub, tlv.value.size, tlv.value.toHexFull()) }
         }
     }

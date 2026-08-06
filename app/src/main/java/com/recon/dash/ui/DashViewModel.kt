@@ -254,6 +254,7 @@ class DashViewModel @Inject constructor(
         bridge?.stopNavigation()
         bridge = null
         MediaSessionListener.stop()
+        com.recon.dash.media.CallStateListener.stop()
         renderJob?.cancel(); renderJob = null
         stateCollectJob?.cancel(); stateCollectJob = null
         wifiCollectJob?.cancel(); wifiCollectJob = null
@@ -331,6 +332,7 @@ class DashViewModel @Inject constructor(
         val b = NavDashBridge(sess, viewModelScope)
         bridge = b
         MediaSessionListener.start(context)
+        com.recon.dash.media.CallStateListener.start(context)
         b.startMediaForwarding()
         observeNavSession(b)
         sess.startStreaming()
@@ -574,6 +576,64 @@ class DashViewModel @Inject constructor(
         _glyphProbeRunning.value = false
         _glyphProbeCode.value = null
         appendLog("GLYPH PROBE stopped")
+    }
+
+    // ── Screen-focus probe (debug) ─────────────────────────────────────────
+    // Finds the "switch the dash carousel to screen N" command so we can auto-open Nav / Phone /
+    // Media instead of the rider joysticking to them. navStart = 06 80 01 0B, so 06 80 <byte> is
+    // our best lead. This sweeps candidate bytes; you WATCH the dash and note which value jumps it
+    // to Nav/Phone/Media. Self-labeling (SCREENPROBE logcat + CSV) so the value that worked is
+    // recoverable exactly. Additive: uses sendRaw, touches no proven send path.
+    private var screenProbeJob: Job? = null
+    private val _screenProbeRunning = MutableStateFlow(false)
+    val screenProbeRunning = _screenProbeRunning.asStateFlow()
+    private val _screenProbeCode = MutableStateFlow<Int?>(null)
+    val screenProbeCode = _screenProbeCode.asStateFlow()
+
+    fun startScreenProbe(from: Int = 0x00, to: Int = 0x20, dwellMs: Long = 5_000L) {
+        val sess = session
+        if (sess == null || _connectionState.value != DashState.STREAMING) {
+            appendLog("Screen probe needs an active streaming session — connect first")
+            return
+        }
+        if (screenProbeJob?.isActive == true) return
+        screenProbeJob = viewModelScope.launch {
+            _screenProbeRunning.value = true
+            val startWall = System.currentTimeMillis()
+            val startElapsed = SystemClock.elapsedRealtime()
+            val csv = runCatching {
+                val dir = File(context.filesDir, "screen-probe").apply { mkdirs() }
+                File(dir, "screen-$startWall.csv").also {
+                    it.appendText("code_dec,code_hex,elapsed_ms,wall_iso,dwell_ms\n")
+                }
+            }.getOrNull()
+            val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", java.util.Locale.US)
+            appendLog("SCREEN PROBE start 06 80 ${hex(from)}..${hex(to)} @ ${dwellMs}ms — watch the dash carousel")
+            try {
+                for (code in from..to) {
+                    if (!isActive || session == null) break
+                    _screenProbeCode.value = code
+                    sess.sendRaw(DashCommands.screenFocusProbe(code))
+                    val elapsed = SystemClock.elapsedRealtime() - startElapsed
+                    val wall = iso.format(java.util.Date())
+                    DebugLog.i(TAG) { "SCREENPROBE code=$code hex=${hex(code)} elapsedMs=$elapsed wall=$wall (sent 06 80 ${hex(code)})" }
+                    csv?.let { runCatching { it.appendText("$code,${hex(code)},$elapsed,$wall,$dwellMs\n") } }
+                    appendLog("SCREEN 06 80 ${hex(code)} — note if the dash switched screen")
+                    delay(dwellMs)
+                }
+                appendLog("SCREEN PROBE done" + (csv?.let { " — saved ${it.name}" } ?: ""))
+            } finally {
+                _screenProbeRunning.value = false
+                _screenProbeCode.value = null
+            }
+        }
+    }
+
+    fun stopScreenProbe() {
+        screenProbeJob?.cancel(); screenProbeJob = null
+        _screenProbeRunning.value = false
+        _screenProbeCode.value = null
+        appendLog("SCREEN PROBE stopped")
     }
 
     private fun hex(v: Int) = "0x%02X".format(v)

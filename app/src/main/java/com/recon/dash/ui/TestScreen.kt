@@ -38,6 +38,8 @@ fun TestScreen(
     val pendingPairing by viewModel.pendingPairingSsid.collectAsStateWithLifecycle()
     val glyphProbeRunning by viewModel.glyphProbeRunning.collectAsStateWithLifecycle()
     val glyphProbeCode by viewModel.glyphProbeCode.collectAsStateWithLifecycle()
+    val screenProbeRunning by viewModel.screenProbeRunning.collectAsStateWithLifecycle()
+    val screenProbeCode by viewModel.screenProbeCode.collectAsStateWithLifecycle()
 
     val isIdle = state == DashState.IDLE || state == DashState.ERROR
 
@@ -167,6 +169,29 @@ fun TestScreen(
                         "Stop probe  (showing 0x%02X)".format(glyphProbeCode)
                     glyphProbeRunning -> "Stop glyph probe"
                     else -> "Start glyph probe (0x00-0x40)"
+                }
+                Text(label, fontSize = 14.sp)
+            }
+
+            // Screen-focus probe: sweeps 06 80 xx to find the "switch carousel to Nav/Phone/Media"
+            // command so those screens can auto-open. Watch the dash; note which value switched it.
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    if (screenProbeRunning) viewModel.stopScreenProbe()
+                    else viewModel.startScreenProbe()
+                },
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (screenProbeRunning) Color(0xFFCC6666) else GoldAccent,
+                ),
+            ) {
+                val label = when {
+                    screenProbeRunning && screenProbeCode != null ->
+                        "Stop screen probe  (sent 06 80 0x%02X)".format(screenProbeCode)
+                    screenProbeRunning -> "Stop screen probe"
+                    else -> "Start screen probe (06 80 0x00-0x20)"
                 }
                 Text(label, fontSize = 14.sp)
             }
