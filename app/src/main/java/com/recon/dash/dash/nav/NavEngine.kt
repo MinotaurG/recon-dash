@@ -49,6 +49,15 @@ class NavEngine(private val route: Route) {
         private const val OFF_ROUTE_M_HIGHWAY = 90.0  // >60 km/h
         private const val OFF_ROUTE_CONSECUTIVE = 5   // consecutive off fixes before declaring off-route
         private const val ACCURACY_GATE_M = 40.0      // fixes worse than this don't vote off-route
+        // A stationary/crawling vehicle CANNOT have left the route, and GPS scatter is worst at rest
+        // (dead-reckoning loses its velocity anchor). Below this speed we never vote off-route — this
+        // is why apps freeze the marker at traffic lights. (Verified: a HITEC-City reroute fired at
+        // v≈0 on a 128m urban-canyon drift while the rider sat on the correct road.)
+        private const val OFF_ROUTE_MIN_SPEED_MPS = 1.5   // ~5.4 km/h
+        // Reported GPS accuracy is over-confident right after a big spike (acc 344m→25m in 1s while
+        // still 128m off). Require this many CONSECUTIVE good-accuracy fixes before trusting the
+        // value enough to vote off-route — so a just-recovered accuracy can't trigger a reroute.
+        private const val ACCURACY_SETTLE_FIXES = 3
         // Heading gate: only count as off-route if the rider's heading also DISAGREES with the
         // route direction. On a roundabout you're far from the chord but still heading along it —
         // heading agreement means "still on route" even at a big snap distance (cheap map-matching).
@@ -63,6 +72,7 @@ class NavEngine(private val route: Route) {
     private var cursor = 0                 // last snapped segment start index (monotonic-ish)
     private var lastCum = 0.0              // last accepted traveled distance (forward-bias anchor)
     private var offRouteVotes = 0
+    private var goodAccuracyStreak = 0     // consecutive fixes with accuracy under the gate
     private var acquired = false           // false until the first successful snap
 
     private val geom = route.geometry
@@ -116,14 +126,20 @@ class NavEngine(private val route: Route) {
             },
             accuracyM * 1.5,
         )
-        val fixReliable = accuracyM in 0f..ACCURACY_GATE_M.toFloat()
+        // Accuracy-recovery debounce: a fix is trustworthy only after N consecutive good-accuracy
+        // fixes, so a value that JUST recovered from a spike (344m→25m) can't vote yet.
+        if (accuracyM in 0f..ACCURACY_GATE_M.toFloat()) goodAccuracyStreak++ else goodAccuracyStreak = 0
+        val fixReliable = goodAccuracyStreak >= ACCURACY_SETTLE_FIXES
+        // Low-speed guard: a stationary/crawling rider cannot have left the route, and GPS scatter
+        // is worst at rest — never vote off-route below the min speed.
+        val moving = speedMps >= OFF_ROUTE_MIN_SPEED_MPS
         // Heading disagrees with the route direction? (Only trust heading when actually moving.)
         val headingDisagrees = bearingDeg != null && speedMps > 2.0f &&
             angleDiff(bearingDeg.toDouble(), best.bearing) > HEADING_AGREE_DEG
-        // Count a vote only when far AND reliable AND (heading disagrees OR very far = 2x threshold).
+        // Count a vote only when MOVING AND far AND reliable AND (heading disagrees OR very far).
         val farEnough = best.dist > distThreshold
         val veryFar = best.dist > distThreshold * 2
-        if (fixReliable && farEnough && (headingDisagrees || veryFar || bearingDeg == null)) {
+        if (moving && fixReliable && farEnough && (headingDisagrees || veryFar || bearingDeg == null)) {
             offRouteVotes++
         } else {
             offRouteVotes = 0

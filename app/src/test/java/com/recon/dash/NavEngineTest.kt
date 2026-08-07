@@ -51,7 +51,9 @@ class NavEngineTest {
         val eng = NavEngine(straightRoute())
         val far = GeoPoint(0.005, 0.01)
         var off = false
-        repeat(6) { off = eng.fix(far).offRoute }
+        // Needs ACCURACY_SETTLE_FIXES (3) good-accuracy fixes to trust the value + OFF_ROUTE_
+        // CONSECUTIVE (5) off votes = 8 total. 10 sustained far fixes comfortably trips it.
+        repeat(10) { off = eng.fix(far).offRoute }
         assertTrue("sustained off-route should trip", off)
     }
 
