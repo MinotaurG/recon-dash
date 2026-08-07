@@ -4,13 +4,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -21,7 +25,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.recon.dash.data.CUSTOM_SLOTS
+import com.recon.dash.data.FavoritePlace
 import com.recon.dash.data.FavoriteSlot
+import com.recon.dash.data.PlaceIcons
+import com.recon.dash.data.defaultIconKey
+import com.recon.dash.data.presetName
 import com.recon.dash.ui.theme.*
 
 @Composable
@@ -31,6 +40,7 @@ fun ManagePlacesScreen(
     viewModel: SavedPlacesViewModel = hiltViewModel(),
 ) {
     val places by viewModel.allPlaces.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf<FavoriteSlot?>(null) }
 
     Column(
         modifier = Modifier
@@ -61,8 +71,8 @@ fun ManagePlacesScreen(
         Column(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(DarkSurface).padding(vertical = 4.dp),
         ) {
-            PlaceRow(FavoriteSlot.HOME, "Home", places, onSetPlace, viewModel::clear)
-            PlaceRow(FavoriteSlot.OFFICE, "Office", places, onSetPlace, viewModel::clear)
+            PlaceRow(FavoriteSlot.HOME, places, onSetPlace, viewModel::clear) { editing = it }
+            PlaceRow(FavoriteSlot.OFFICE, places, onSetPlace, viewModel::clear) { editing = it }
         }
 
         Spacer(Modifier.height(20.dp))
@@ -72,24 +82,41 @@ fun ManagePlacesScreen(
         Column(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(DarkSurface).padding(vertical = 4.dp),
         ) {
-            for (slot in listOf(FavoriteSlot.CUSTOM_1, FavoriteSlot.CUSTOM_2, FavoriteSlot.CUSTOM_3, FavoriteSlot.CUSTOM_4)) {
-                PlaceRow(slot, customLabel(slot), places, onSetPlace, viewModel::clear)
+            for (slot in CUSTOM_SLOTS) {
+                PlaceRow(slot, places, onSetPlace, viewModel::clear) { editing = it }
             }
         }
 
         Spacer(Modifier.height(32.dp))
+    }
+
+    editing?.let { slot ->
+        val place = places[slot]
+        if (place != null) {
+            EditPlaceDialog(
+                place = place,
+                onDismiss = { editing = null },
+                onSave = { name, icon ->
+                    viewModel.updateNameAndIcon(slot, name, icon)
+                    editing = null
+                },
+            )
+        } else {
+            editing = null // nothing to edit until a location is set
+        }
     }
 }
 
 @Composable
 private fun PlaceRow(
     slot: FavoriteSlot,
-    label: String,
-    places: Map<FavoriteSlot, com.recon.dash.data.FavoritePlace>,
+    places: Map<FavoriteSlot, FavoritePlace>,
     onSetPlace: (FavoriteSlot) -> Unit,
     onClear: (FavoriteSlot) -> Unit,
+    onEdit: (FavoriteSlot) -> Unit,
 ) {
     val place = places[slot]
+    val icon = place?.let { PlaceIcons.forPlace(it) } ?: PlaceIcons.forSlot(slot)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -97,8 +124,15 @@ private fun PlaceRow(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box(
+            modifier = Modifier.size(36.dp).clip(CircleShape).background(DarkBackground),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = place?.name ?: label, color = OnSurface, fontSize = 15.sp)
+            Text(text = place?.name ?: slot.presetName(), color = OnSurface, fontSize = 15.sp)
             Text(
                 text = place?.address?.ifBlank { "Tap to set" } ?: "Tap to set",
                 color = OnSurface.copy(alpha = 0.45f),
@@ -108,6 +142,9 @@ private fun PlaceRow(
             )
         }
         if (place != null) {
+            IconButton(onClick = { onEdit(slot) }, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Rounded.Edit, "Edit", tint = OnSurface.copy(alpha = 0.6f), modifier = Modifier.size(18.dp))
+            }
             Text(
                 text = "Clear",
                 color = Color(0xFFFF453A).copy(alpha = 0.8f),
@@ -118,10 +155,62 @@ private fun PlaceRow(
     }
 }
 
-private fun customLabel(slot: FavoriteSlot): String = when (slot) {
-    FavoriteSlot.CUSTOM_1 -> "Place 1"
-    FavoriteSlot.CUSTOM_2 -> "Place 2"
-    FavoriteSlot.CUSTOM_3 -> "Place 3"
-    FavoriteSlot.CUSTOM_4 -> "Place 4"
-    else -> "Place"
+@Composable
+private fun EditPlaceDialog(
+    place: FavoritePlace,
+    onDismiss: () -> Unit,
+    onSave: (name: String, iconKey: String) -> Unit,
+) {
+    var name by remember { mutableStateOf(place.name) }
+    var iconKey by remember { mutableStateOf(place.icon.ifBlank { place.slot.defaultIconKey() }) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { onSave(name.trim(), iconKey) }) {
+                Text("Save", color = GoldAccent)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = OnSurface.copy(alpha = 0.6f)) } },
+        title = { Text("Edit place", color = OnSurface) },
+        containerColor = DarkSurface,
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(16.dp))
+                Text("Icon", color = OnSurface.copy(alpha = 0.6f), fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(6),
+                    modifier = Modifier.fillMaxWidth().height(180.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(PlaceIcons.all) { (key, vector) ->
+                        val selected = key == iconKey
+                        Box(
+                            modifier = Modifier
+                                .aspectRatio(1f)
+                                .clip(CircleShape)
+                                .background(if (selected) GoldAccent.copy(alpha = 0.25f) else DarkBackground)
+                                .clickable { iconKey = key },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                vector, contentDescription = key,
+                                tint = if (selected) GoldAccent else OnSurface.copy(alpha = 0.7f),
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    )
 }

@@ -409,23 +409,6 @@ private fun CarPlayTile(
     }
 }
 
-private fun slotColor(slot: FavoriteSlot): Color = when (slot) {
-    FavoriteSlot.HOME -> TileBlue
-    FavoriteSlot.OFFICE -> TileGreen
-    FavoriteSlot.CUSTOM_1 -> TileOrange
-    FavoriteSlot.CUSTOM_2 -> TilePink
-    FavoriteSlot.CUSTOM_3 -> TileTeal
-    FavoriteSlot.CUSTOM_4 -> Color(0xFF5E5CE6)
-}
-
-private fun slotIcon(slot: FavoriteSlot): ImageVector = when (slot) {
-    FavoriteSlot.HOME -> Icons.Rounded.Home
-    FavoriteSlot.OFFICE -> Icons.Rounded.Work
-    FavoriteSlot.CUSTOM_1 -> Icons.Rounded.FitnessCenter
-    FavoriteSlot.CUSTOM_2 -> Icons.Rounded.Person
-    FavoriteSlot.CUSTOM_3 -> Icons.Rounded.LocalCafe
-    FavoriteSlot.CUSTOM_4 -> Icons.Rounded.Place
-}
 
 private fun getMusicAppIcon(context: android.content.Context, pkg: String): Drawable? {
     if (pkg.isBlank()) {
