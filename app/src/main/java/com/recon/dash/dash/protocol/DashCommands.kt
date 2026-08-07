@@ -162,6 +162,7 @@ object DashCommands {
         title: String,
         projectionOn: Boolean = false,
         maneuver: Int? = null,
+        secondaryManeuver: Int? = null,  // 05 03 small "then" glyph; template default 0x34
         primaryUnit: Int? = null,
         totalDist: Int? = null,
         totalUnit: Int? = null,
@@ -196,6 +197,9 @@ object DashCommands {
         }
         patch1(0x06, 0x05, if (projectionOn) 0x55 else 0xAA)
         maneuver?.let { patch1(0x05, 0x02, it) }
+        // 05 03 = the small secondary "then" glyph. The template hardcodes 0x34; patch it to the
+        // real maneuver-after-next, or 0x00 to hide it when there's no following maneuver.
+        patch1(0x05, 0x03, secondaryManeuver ?: 0x00)
         primaryUnit?.let { patch1(0x05, 0x06, it) }
         // The template carries the captured French ride's figures (total 0x004F =
         // "7.9 km", secondary 0x000A). Zero them by DEFAULT so a card sent with no live
@@ -230,6 +234,7 @@ object DashCommands {
      */
     fun activeNavPacket(
         maneuver: Int = NAV_MANEUVER_CONTINUE,
+        secondaryManeuver: Int? = null,
         primaryDist: Int = 500,
         primaryUnit: Int = NAV_UNIT_METERS,
         totalDist: Int = 500,
@@ -240,6 +245,8 @@ object DashCommands {
         fun u8(v: Int) = "%02X".format(v and 0xFF)
         val tlvs = StringBuilder()
         tlvs.append("05020001").append(u8(maneuver))      // primary maneuver
+        // 05 03 = small secondary "then" glyph. 0x00 hides it when there's no following maneuver.
+        tlvs.append("05030001").append(u8(secondaryManeuver ?: 0x00))
         tlvs.append("05040002").append(u16(primaryDist))  // primary distance
         tlvs.append("05060001").append(u8(primaryUnit))   // primary unit
         tlvs.append("05090002").append(u16(totalDist))    // total distance
@@ -248,7 +255,7 @@ object DashCommands {
         tlvs.append("06050001").append(if (projectionOn) "55" else "AA") // projection flag
         tlvs.append("060D0001AA")                          // decimal format off
 
-        val segCount = 8 + 1
+        val segCount = 9 + 1
         val innerHex = "%04X".format(segCount) + NAV_HDR + tlvs.toString()
         val innerBytes = innerHex.length / 2
         val outerLen = innerBytes + 2

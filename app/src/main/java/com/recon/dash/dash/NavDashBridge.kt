@@ -78,6 +78,8 @@ class NavDashBridge(
         // captures/2026-08-05-bench-ownapp/SPEC.md). It reads roundaboutExitCount so a
         // roundabout renders the correct exit-numbered glyph (0x0B..0x13 = exits 1..9).
         val maneuverCode = progress.nextManeuver?.dashCode ?: 0x09
+        // Small secondary "then" glyph (05 03): the maneuver AFTER next. null → hidden on the dash.
+        val secondaryCode = progress.secondManeuver?.dashCode
         val (primaryDist, primaryUnit) = toDashDistUnit(progress.distanceToManeuverM)
         val (totalDist, totalUnit) = toDashDistUnit(progress.remainingMeters)
 
@@ -91,6 +93,7 @@ class NavDashBridge(
             totalDist = totalDist,
             totalUnit = totalUnit,
             etaHHMM = etaHHMM,
+            secondaryManeuver = secondaryCode,
         )
     }
 

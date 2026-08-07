@@ -294,18 +294,18 @@ internal object ValhallaTripParser {
         15 -> ManeuverType.TURN_LEFT                   // kLeft
         16 -> ManeuverType.SLIGHT_LEFT                 // kSlightLeft
         17 -> ManeuverType.CONTINUE                    // kRampStraight
-        18 -> ManeuverType.SLIGHT_RIGHT                // kRampRight
-        19 -> ManeuverType.SLIGHT_LEFT                 // kRampLeft
-        20 -> ManeuverType.SLIGHT_RIGHT                // kExitRight
-        21 -> ManeuverType.SLIGHT_LEFT                 // kExitLeft
+        18 -> ManeuverType.KEEP_RIGHT                  // kRampRight  (fork onto ramp, not a slight turn)
+        19 -> ManeuverType.KEEP_LEFT                   // kRampLeft
+        20 -> ManeuverType.KEEP_RIGHT                  // kExitRight
+        21 -> ManeuverType.KEEP_LEFT                   // kExitLeft
         22 -> ManeuverType.CONTINUE                    // kStayStraight
-        23 -> ManeuverType.SLIGHT_RIGHT                // kStayRight
-        24 -> ManeuverType.SLIGHT_LEFT                 // kStayLeft
+        23 -> ManeuverType.KEEP_RIGHT                  // kStayRight  (bear/keep right)
+        24 -> ManeuverType.KEEP_LEFT                   // kStayLeft   (bear/keep left)
         25 -> ManeuverType.CONTINUE                    // kMerge (straight)
         26, 27 -> ManeuverType.ROUNDABOUT              // kRoundaboutEnter / kRoundaboutExit
         // 28,29 = ferry enter/exit; 30-36 = transit; 39-43 = elevator/steps/escalator/building
-        37 -> ManeuverType.SLIGHT_RIGHT                // kMergeRight
-        38 -> ManeuverType.SLIGHT_LEFT                 // kMergeLeft
+        37 -> ManeuverType.KEEP_RIGHT                  // kMergeRight
+        38 -> ManeuverType.KEEP_LEFT                   // kMergeLeft
         else -> ManeuverType.CONTINUE
     }
 }

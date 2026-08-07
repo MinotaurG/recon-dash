@@ -114,6 +114,8 @@ object OsrmClient {
         ManeuverType.TURN_RIGHT -> "Turn right onto $road"
         ManeuverType.SLIGHT_LEFT -> "Slight left onto $road"
         ManeuverType.SLIGHT_RIGHT -> "Slight right onto $road"
+        ManeuverType.KEEP_LEFT -> "Keep left onto $road"
+        ManeuverType.KEEP_RIGHT -> "Keep right onto $road"
         ManeuverType.SHARP_LEFT -> "Sharp left onto $road"
         ManeuverType.SHARP_RIGHT -> "Sharp right onto $road"
         ManeuverType.UTURN -> "Make a U-turn"

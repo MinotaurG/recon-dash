@@ -29,6 +29,7 @@ class NavEngine(private val route: Route) {
         val remainingMeters: Double,
         val distanceToManeuverM: Double,
         val nextManeuver: Maneuver?,
+        val secondManeuver: Maneuver?,   // the maneuver AFTER next — drives the dash's small secondary glyph
         val etaSeconds: Double,
         val offRoute: Boolean,
         val arrived: Boolean,
@@ -79,7 +80,7 @@ class NavEngine(private val route: Route) {
         if (geom.size < 2) {
             // Degenerate route — should never happen (Router guards), but never throw in nav.
             val only = geom.firstOrNull() ?: pos
-            return Progress(only, 0, 0.0, 0.0, 0.0, 0.0, null, 0.0, offRoute = false, arrived = false, snapDistanceM = 0.0, currentStreet = "")
+            return Progress(only, 0, 0.0, 0.0, 0.0, 0.0, null, null, 0.0, offRoute = false, arrived = false, snapDistanceM = 0.0, currentStreet = "")
         }
 
         // 1. Snap within a forward window around the cursor; re-acquire globally if far off.
@@ -130,9 +131,14 @@ class NavEngine(private val route: Route) {
         val offRoute = offRouteVotes >= OFF_ROUTE_CONSECUTIVE
 
         // 4. Next maneuver ahead of the snap on the SAME axis (now correct after the axis fix).
-        val next = route.maneuvers.firstOrNull {
+        //    Also the maneuver AFTER that (secondManeuver) — the dash shows its glyph as a small
+        //    secondary icon ("then turn X"). We skip ARRIVE for the secondary so we don't preview
+        //    "arrive" as a turn.
+        val upcoming = route.maneuvers.filter {
             it.cumulativeMeters > traveled + 1.0 && it.type != ManeuverType.DEPART
         }
+        val next = upcoming.firstOrNull()
+        val second = upcoming.getOrNull(1)?.takeIf { it.type != ManeuverType.ARRIVE }
         val distToManeuver = next?.let { (it.cumulativeMeters - traveled).coerceAtLeast(0.0) } ?: remaining
 
         // Current street = the road the rider is on NOW: the last maneuver at or before the snap
@@ -161,6 +167,7 @@ class NavEngine(private val route: Route) {
             remainingMeters = remaining,
             distanceToManeuverM = distToManeuver,
             nextManeuver = next,
+            secondManeuver = second,
             etaSeconds = eta,
             offRoute = offRoute,
             arrived = arrived,

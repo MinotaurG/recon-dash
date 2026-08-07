@@ -30,6 +30,13 @@ class ManeuverDashCodeTest {
         assertEquals(0x1A, m(ManeuverType.UTURN).dashCode)
     }
 
+    @Test fun keepForkUsesDedicatedGlyphs_notSlightTurn() {
+        // Regression for the "keep left showed a slight-turn arrow" bug: keep/fork/ramp maneuvers
+        // must map to the dash's fork glyphs (0x1F/0x20), NOT the slight-turn codes (0x16/0x27).
+        assertEquals(0x1F, m(ManeuverType.KEEP_LEFT).dashCode)
+        assertEquals(0x20, m(ManeuverType.KEEP_RIGHT).dashCode)
+    }
+
     @Test fun roundaboutExitsMapTo0x0BThrough0x13() {
         // generic (unknown exit) = 0x0A; exit N = 0x0A + N
         assertEquals(0x0A, m(ManeuverType.ROUNDABOUT, exit = 0).dashCode)

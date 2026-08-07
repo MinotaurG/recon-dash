@@ -117,8 +117,10 @@ class VoiceManager private constructor(context: Context) {
     private fun turnPhrase(m: Maneuver): String = when (m.type) {
         ManeuverType.TURN_LEFT    -> "turn left"
         ManeuverType.TURN_RIGHT   -> "turn right"
-        ManeuverType.SLIGHT_LEFT  -> "keep left"
-        ManeuverType.SLIGHT_RIGHT -> "keep right"
+        ManeuverType.SLIGHT_LEFT  -> "slight left"
+        ManeuverType.SLIGHT_RIGHT -> "slight right"
+        ManeuverType.KEEP_LEFT    -> "keep left"
+        ManeuverType.KEEP_RIGHT   -> "keep right"
         ManeuverType.SHARP_LEFT   -> "sharp left"
         ManeuverType.SHARP_RIGHT  -> "sharp right"
         ManeuverType.UTURN        -> "make a U-turn"

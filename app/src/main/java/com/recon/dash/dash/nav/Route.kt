@@ -4,7 +4,11 @@ package com.recon.dash.dash.nav
  *  active probe (see captures/2026-08-05-bench-ownapp/SPEC.md); [Maneuver.dashCode] maps each
  *  type to its verified code and falls back to continue (0x09) for anything unmapped. */
 enum class ManeuverType { CONTINUE, TURN_LEFT, TURN_RIGHT, SLIGHT_LEFT, SLIGHT_RIGHT,
-    SHARP_LEFT, SHARP_RIGHT, UTURN, ROUNDABOUT, DEPART, ARRIVE;
+    SHARP_LEFT, SHARP_RIGHT, UTURN, ROUNDABOUT, DEPART, ARRIVE,
+    // Fork / keep / ramp maneuvers — distinct from a plain slight turn. The dash has dedicated
+    // fork/keep glyphs (SPEC 0x1F/0x20), so these must NOT collapse to SLIGHT_* (that showed a
+    // slight-turn arrow for a "keep left"). See captures/2026-08-05-bench-ownapp/SPEC.md.
+    KEEP_LEFT, KEEP_RIGHT;
 
     companion object {
         /** Map an OSRM step maneuver (type + modifier) to our enum. */
@@ -12,7 +16,15 @@ enum class ManeuverType { CONTINUE, TURN_LEFT, TURN_RIGHT, SLIGHT_LEFT, SLIGHT_R
             "depart"   -> DEPART
             "arrive"   -> ARRIVE
             "roundabout", "rotary" -> ROUNDABOUT
-            "fork", "end of road", "turn", "new name", "continue", "merge", "on ramp", "off ramp" ->
+            // Fork / merge / ramp are "keep" maneuvers (bear left/right onto a branch), NOT slight
+            // turns — give them the dash's dedicated keep glyph so they don't look like a turn.
+            "fork", "merge", "on ramp", "off ramp" ->
+                when (modifier) {
+                    "left", "slight left", "sharp left"    -> KEEP_LEFT
+                    "right", "slight right", "sharp right" -> KEEP_RIGHT
+                    else                                    -> CONTINUE
+                }
+            "end of road", "turn", "new name", "continue" ->
                 when (modifier) {
                     "left"         -> TURN_LEFT
                     "right"        -> TURN_RIGHT
@@ -61,6 +73,9 @@ data class Maneuver(
         ManeuverType.TURN_LEFT,  ManeuverType.SHARP_LEFT  -> 0x18
         ManeuverType.SLIGHT_RIGHT -> 0x27
         ManeuverType.SLIGHT_LEFT  -> 0x16
+        // Keep/fork/ramp: dedicated fork glyphs, NOT slight-turn arrows (0x1F/0x20 = keep near).
+        ManeuverType.KEEP_LEFT    -> 0x1F
+        ManeuverType.KEEP_RIGHT   -> 0x20
         ManeuverType.UTURN        -> 0x1A
         ManeuverType.ROUNDABOUT   ->
             // 0x0B is exit 1 ... 0x13 is exit 9; generic roundabout (unknown exit) = 0x0A.

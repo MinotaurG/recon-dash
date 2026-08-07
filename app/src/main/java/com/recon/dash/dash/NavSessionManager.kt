@@ -29,6 +29,7 @@ data class NavProgress(
     val aheadGeometry: List<GeoPoint>,       // route still to ride (blue)
     val distanceToManeuverM: Double,
     val nextManeuver: Maneuver?,
+    val secondManeuver: Maneuver?,   // maneuver after next — dash's small secondary glyph
     val remainingMeters: Double,
     val etaSeconds: Double,
     val offRoute: Boolean,
@@ -110,6 +111,7 @@ class NavSessionManager @Inject constructor() {
             aheadGeometry = ahead,
             distanceToManeuverM = p.distanceToManeuverM,
             nextManeuver = p.nextManeuver,
+            secondManeuver = p.secondManeuver,
             remainingMeters = p.remainingMeters,
             etaSeconds = p.etaSeconds,
             offRoute = offRoute,
