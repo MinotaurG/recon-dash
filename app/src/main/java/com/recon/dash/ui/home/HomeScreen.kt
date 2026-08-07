@@ -58,6 +58,7 @@ fun HomeScreen(
     onFavoriteTap: (FavoritePlace) -> Unit,
     onFavoriteSlotTap: (FavoriteSlot) -> Unit,
     onDashTap: () -> Unit,
+    onNavMapTap: () -> Unit = {},
     onSettingsTap: () -> Unit = {},
     onRidesTap: () -> Unit = {},
     onGarageTap: () -> Unit = {},
@@ -100,6 +101,14 @@ fun HomeScreen(
             icon = Icons.Rounded.Sensors,
             color = if (dashConnected) Success else Color(0xFF636366),
             onClick = onDashTap,
+        ))
+        // Navigation (4th, right after Dash) — opens the full map + search.
+        add(HomeTile(
+            id = "nav",
+            label = "Navigation",
+            icon = Icons.Rounded.Navigation,
+            color = TileBlue,
+            onClick = onNavMapTap,
         ))
         // Music (show actual app icon if installed)
         val musicDrawable = getMusicAppIcon(context, musicApp)
