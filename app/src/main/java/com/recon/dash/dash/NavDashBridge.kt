@@ -94,6 +94,7 @@ class NavDashBridge(
             totalUnit = totalUnit,
             etaHHMM = etaHHMM,
             secondaryManeuver = secondaryCode,
+            currentStreet = progress.currentStreet,
         )
     }
 

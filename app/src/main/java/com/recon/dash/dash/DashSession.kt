@@ -99,14 +99,19 @@ class DashSession(
     @Volatile private var navActive = false
     @Volatile private var navChromeEnabled = false
 
+    // Live title for the golden bar while navigating: the current street (RE-app behavior),
+    // falling back to the destination name when the street is unknown. Blank = use destination.
+    @Volatile private var navCurrentStreet: String = ""
+
     /** Push the latest turn-by-turn figures; sent to the dash at 1 Hz. */
     fun updateNavInfo(
         maneuver: Int, primaryDist: Int, primaryUnit: Int,
         totalDist: Int, totalUnit: Int, etaHHMM: String? = null,
-        secondaryManeuver: Int? = null,
+        secondaryManeuver: Int? = null, currentStreet: String = "",
     ) {
         navManeuver = maneuver
         navSecondaryManeuver = secondaryManeuver
+        navCurrentStreet = currentStreet
         navPrimaryDist = primaryDist
         navPrimaryUnit = primaryUnit
         navTotalDist = totalDist
@@ -124,8 +129,10 @@ class DashSession(
      */
     private fun liveRouteCard(): ByteArray {
         val projection = mode == DashMode.DIGITAL
+        // While navigating, the golden bar shows the CURRENT STREET (RE-app behavior); fall back to
+        // the destination name until a street is known.
         return if (navActive) DashCommands.routeCard(
-            destinationName, projection,
+            navCurrentStreet.ifBlank { destinationName }, projection,
             maneuver = navManeuver,
             secondaryManeuver = navSecondaryManeuver,
             primaryUnit = navPrimaryUnit,
