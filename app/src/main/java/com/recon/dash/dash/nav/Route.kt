@@ -69,10 +69,17 @@ data class Maneuver(
     val dashCode: Int get() = when (type) {
         ManeuverType.CONTINUE, ManeuverType.DEPART -> 0x09
         ManeuverType.ARRIVE       -> 0x09  // no distinct arrive glyph verified; keep straight
+        // Sharp and normal turns share the "near turn" glyph per SPEC (0x14 = sharp/turn-right
+        // near, 0x18 = turn-left near) — the dash has no distinct sharp variant.
         ManeuverType.TURN_RIGHT, ManeuverType.SHARP_RIGHT -> 0x14
         ManeuverType.TURN_LEFT,  ManeuverType.SHARP_LEFT  -> 0x18
+        // Slight turns: 0x27 = verified filled slight-right (near). There is NO verified
+        // slight-left-near glyph in the catalog; 0x16 is turn-left-FAR (outline, hooked) which
+        // reads as a full turn, not a slight — so a slight left uses the near turn-left (0x18),
+        // which is closer to the truth than a far-outline glyph. (Revisit if a recapture finds a
+        // dedicated slight-left.)
         ManeuverType.SLIGHT_RIGHT -> 0x27
-        ManeuverType.SLIGHT_LEFT  -> 0x16
+        ManeuverType.SLIGHT_LEFT  -> 0x18
         // Keep/fork/ramp: dedicated fork glyphs, NOT slight-turn arrows (0x1F/0x20 = keep near).
         ManeuverType.KEEP_LEFT    -> 0x1F
         ManeuverType.KEEP_RIGHT   -> 0x20

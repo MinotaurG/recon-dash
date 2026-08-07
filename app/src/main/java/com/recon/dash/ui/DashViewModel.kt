@@ -590,13 +590,19 @@ class DashViewModel @Inject constructor(
     private val _screenProbeCode = MutableStateFlow<Int?>(null)
     val screenProbeCode = _screenProbeCode.asStateFlow()
 
-    fun startScreenProbe(from: Int = 0x00, to: Int = 0x20, dwellMs: Long = 5_000L) {
+    fun startScreenProbe(dwellMs: Long = 5_000L) {
         val sess = session
         if (sess == null || _connectionState.value != DashState.STREAMING) {
             appendLog("Screen probe needs an active streaming session — connect first")
             return
         }
         if (screenProbeJob?.isActive == true) return
+        // A first sweep proved 06 80 <byte> does NOT switch screens. Now walk the 06-command family
+        // over sub-codes we DON'T already use (01,03,04,05,08,0D,0F,10,11 are live nav/projection
+        // fields — skip them so we don't disrupt the session), each with a few candidate values.
+        val usedSubs = setOf(0x01, 0x03, 0x04, 0x05, 0x08, 0x0A, 0x0D, 0x0F, 0x10, 0x11, 0x12, 0x80)
+        val subs = (0x00..0x30).filter { it !in usedSubs }
+        val values = listOf(0x00, 0x01, 0x02, 0x55)
         screenProbeJob = viewModelScope.launch {
             _screenProbeRunning.value = true
             val startWall = System.currentTimeMillis()
@@ -604,22 +610,24 @@ class DashViewModel @Inject constructor(
             val csv = runCatching {
                 val dir = File(context.filesDir, "screen-probe").apply { mkdirs() }
                 File(dir, "screen-$startWall.csv").also {
-                    it.appendText("code_dec,code_hex,elapsed_ms,wall_iso,dwell_ms\n")
+                    it.appendText("sub_hex,value_hex,elapsed_ms,wall_iso,dwell_ms\n")
                 }
             }.getOrNull()
             val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", java.util.Locale.US)
-            appendLog("SCREEN PROBE start 06 80 ${hex(from)}..${hex(to)} @ ${dwellMs}ms — watch the dash carousel")
+            appendLog("SCREEN PROBE start — sweeping 06 <sub> <val> @ ${dwellMs}ms — watch the dash carousel")
             try {
-                for (code in from..to) {
-                    if (!isActive || session == null) break
-                    _screenProbeCode.value = code
-                    sess.sendRaw(DashCommands.screenFocusProbe(code))
-                    val elapsed = SystemClock.elapsedRealtime() - startElapsed
-                    val wall = iso.format(java.util.Date())
-                    DebugLog.i(TAG) { "SCREENPROBE code=$code hex=${hex(code)} elapsedMs=$elapsed wall=$wall (sent 06 80 ${hex(code)})" }
-                    csv?.let { runCatching { it.appendText("$code,${hex(code)},$elapsed,$wall,$dwellMs\n") } }
-                    appendLog("SCREEN 06 80 ${hex(code)} — note if the dash switched screen")
-                    delay(dwellMs)
+                for (sub in subs) {
+                    for (v in values) {
+                        if (!isActive || session == null) break
+                        _screenProbeCode.value = sub
+                        sess.sendRaw(DashCommands.screenFocusProbe(sub, v))
+                        val elapsed = SystemClock.elapsedRealtime() - startElapsed
+                        val wall = iso.format(java.util.Date())
+                        DebugLog.i(TAG) { "SCREENPROBE sub=${hex(sub)} val=${hex(v)} elapsedMs=$elapsed wall=$wall (sent 06 ${hex(sub)} ${hex(v)})" }
+                        csv?.let { runCatching { it.appendText("${hex(sub)},${hex(v)},$elapsed,$wall,$dwellMs\n") } }
+                        appendLog("SCREEN 06 ${hex(sub)} ${hex(v)} — note if the dash switched screen")
+                        delay(dwellMs)
+                    }
                 }
                 appendLog("SCREEN PROBE done" + (csv?.let { " — saved ${it.name}" } ?: ""))
             } finally {

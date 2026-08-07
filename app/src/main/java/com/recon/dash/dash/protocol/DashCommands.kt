@@ -301,12 +301,12 @@ object DashCommands {
 
     /**
      * SCREEN-FOCUS PROBE (unverified). Candidate "switch the dash carousel to screen N" command.
-     * navStart is 06 80 01 0B, so the 06 80 family is our best lead for a screen/mode switch — this
-     * sends 06 80 <byte>. The screen-focus probe (DashViewModel) sweeps candidate bytes so we can
-     * watch which value jumps the dash to Nav/Phone/Media. Purely additive; not used by nav/media.
+     * A first sweep proved 06 80 <byte> does NOT switch screens, so this now sweeps the whole
+     * 06-command family: send 06 <sub> <value>. The probe (DashViewModel) walks sub-codes we don't
+     * already use, watching which makes the dash jump to Nav/Phone/Media. Purely additive.
      */
-    fun screenFocusProbe(code: Int): ByteArray =
-        K1GPacket.build(K1GPacket.tlv(0x06, 0x80, code and 0xFF))
+    fun screenFocusProbe(sub: Int, value: Int): ByteArray =
+        K1GPacket.build(K1GPacket.tlv(0x06, sub and 0xFF, value and 0xFF))
 
     private fun indexOf(haystack: ByteArray, needle: ByteArray, fromEnd: Boolean = false): Int {
         val range = if (fromEnd) (haystack.size - needle.size downTo 0) else (0..haystack.size - needle.size)

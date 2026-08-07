@@ -26,7 +26,8 @@ class ManeuverDashCodeTest {
         assertEquals(0x18, m(ManeuverType.TURN_LEFT).dashCode)
         assertEquals(0x18, m(ManeuverType.SHARP_LEFT).dashCode)
         assertEquals(0x27, m(ManeuverType.SLIGHT_RIGHT).dashCode)
-        assertEquals(0x16, m(ManeuverType.SLIGHT_LEFT).dashCode)
+        // No verified slight-left-near glyph; use turn-left-near (0x18), not the far-outline 0x16.
+        assertEquals(0x18, m(ManeuverType.SLIGHT_LEFT).dashCode)
         assertEquals(0x1A, m(ManeuverType.UTURN).dashCode)
     }
 

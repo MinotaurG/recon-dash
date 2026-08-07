@@ -191,9 +191,9 @@ fun TestScreen(
             ) {
                 val label = when {
                     screenProbeRunning && screenProbeCode != null ->
-                        "Stop screen probe  (sent 06 80 0x%02X)".format(screenProbeCode)
+                        "Stop screen probe  (sub 06 0x%02X)".format(screenProbeCode)
                     screenProbeRunning -> "Stop screen probe"
-                    else -> "Start screen probe (06 80 0x00-0x20)"
+                    else -> "Start screen probe (06 family sweep)"
                 }
                 Text(label, fontSize = 14.sp)
             }
