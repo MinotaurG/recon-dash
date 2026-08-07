@@ -240,6 +240,10 @@ object DashCommands {
         totalDist: Int = 500,
         totalUnit: Int = NAV_UNIT_METERS,
         projectionOn: Boolean = true,
+        // PROBE ONLY: an extra TLV (type,sub,1-byte value) appended to the nav packet, to test
+        // whether an unmapped field (05 0C / 05 07 / 05 54 …) controls the turn-arrow COLOR/FLASH.
+        // Null in normal use. See DashViewModel.startNavFieldProbe.
+        extraField: Triple<Int, Int, Int>? = null,
     ): ByteArray {
         fun u16(v: Int) = "%04X".format(v and 0xFFFF)
         fun u8(v: Int) = "%02X".format(v and 0xFF)
@@ -254,8 +258,12 @@ object DashCommands {
         tlvs.append("050A000155")                          // decimal separator = '.'
         tlvs.append("06050001").append(if (projectionOn) "55" else "AA") // projection flag
         tlvs.append("060D0001AA")                          // decimal format off
+        var extra = 0
+        extraField?.let { (t, s, v) ->
+            tlvs.append(u8(t)).append(u8(s)).append("0001").append(u8(v)); extra = 1
+        }
 
-        val segCount = 9 + 1
+        val segCount = 9 + 1 + extra
         val innerHex = "%04X".format(segCount) + NAV_HDR + tlvs.toString()
         val innerBytes = innerHex.length / 2
         val outerLen = innerBytes + 2

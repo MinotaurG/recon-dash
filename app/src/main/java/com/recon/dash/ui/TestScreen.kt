@@ -40,6 +40,8 @@ fun TestScreen(
     val glyphProbeCode by viewModel.glyphProbeCode.collectAsStateWithLifecycle()
     val screenProbeRunning by viewModel.screenProbeRunning.collectAsStateWithLifecycle()
     val screenProbeCode by viewModel.screenProbeCode.collectAsStateWithLifecycle()
+    val navFieldProbeRunning by viewModel.navFieldProbeRunning.collectAsStateWithLifecycle()
+    val navFieldProbeLabel by viewModel.navFieldProbeLabel.collectAsStateWithLifecycle()
 
     val isIdle = state == DashState.IDLE || state == DashState.ERROR
 
@@ -192,6 +194,29 @@ fun TestScreen(
                         "Stop screen probe  (sent 06 80 0x%02X)".format(screenProbeCode)
                     screenProbeRunning -> "Stop screen probe"
                     else -> "Start screen probe (06 80 0x00-0x20)"
+                }
+                Text(label, fontSize = 14.sp)
+            }
+
+            // Nav-field probe: sweeps unmapped nav TLVs to find the arrow color/flash control
+            // (arrow flashes red constantly today). Watch for the flash to calm / change color.
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    if (navFieldProbeRunning) viewModel.stopNavFieldProbe()
+                    else viewModel.startNavFieldProbe()
+                },
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (navFieldProbeRunning) Color(0xFFCC6666) else GoldAccent,
+                ),
+            ) {
+                val label = when {
+                    navFieldProbeRunning && navFieldProbeLabel != null ->
+                        "Stop field probe  ($navFieldProbeLabel)"
+                    navFieldProbeRunning -> "Stop nav-field probe"
+                    else -> "Start nav-field probe (flash/color)"
                 }
                 Text(label, fontSize = 14.sp)
             }

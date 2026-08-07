@@ -636,6 +636,76 @@ class DashViewModel @Inject constructor(
         appendLog("SCREEN PROBE stopped")
     }
 
+    // ── Nav-field (color / flash) probe (debug) ────────────────────────────
+    // The turn arrow flashes red constantly regardless of distance. The RE-app route-card template
+    // carries fields we DON'T send from activeNavPacket (05 0C=04, 05 07=30, 05 54=30) — one likely
+    // controls arrow color / flash / urgency. This holds a steady maneuver (0x14, 500m) and sweeps
+    // candidate (field,value) pairs one at a time; WATCH whether the arrow stops flashing / changes
+    // color, and note the pair. Self-labeling (NAVFIELDPROBE logcat + CSV). Additive via sendRaw.
+    private var navFieldProbeJob: Job? = null
+    private val _navFieldProbeRunning = MutableStateFlow(false)
+    val navFieldProbeRunning = _navFieldProbeRunning.asStateFlow()
+    private val _navFieldProbeLabel = MutableStateFlow<String?>(null)
+    val navFieldProbeLabel = _navFieldProbeLabel.asStateFlow()
+
+    fun startNavFieldProbe(dwellMs: Long = 5_000L) {
+        val sess = session
+        if (sess == null || _connectionState.value != DashState.STREAMING) {
+            appendLog("Nav-field probe needs an active streaming session — connect first")
+            return
+        }
+        if (navFieldProbeJob?.isActive == true) return
+        // Candidate (field, sub) pairs from the template's unmapped fields, each swept over a few
+        // values. Order: most-likely (05 0C) first.
+        val fields = listOf(0x05 to 0x0C, 0x05 to 0x07, 0x05 to 0x54, 0x06 to 0x08, 0x06 to 0x10)
+        val values = listOf(0x00, 0x01, 0x04, 0x30, 0x55, 0xAA)
+        navFieldProbeJob = viewModelScope.launch {
+            _navFieldProbeRunning.value = true
+            val startWall = System.currentTimeMillis()
+            val startElapsed = SystemClock.elapsedRealtime()
+            val csv = runCatching {
+                val dir = File(context.filesDir, "navfield-probe").apply { mkdirs() }
+                File(dir, "navfield-$startWall.csv").also {
+                    it.appendText("field_hex,sub_hex,value_hex,elapsed_ms,wall_iso,dwell_ms\n")
+                }
+            }.getOrNull()
+            val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", java.util.Locale.US)
+            appendLog("NAV-FIELD PROBE start — steady arrow (0x14, 500m); watch for flash/color change")
+            try {
+                for ((t, s) in fields) {
+                    for (v in values) {
+                        if (!isActive || session == null) break
+                        val label = "%02X %02X = %02X".format(t, s, v)
+                        _navFieldProbeLabel.value = label
+                        // Send a steady nav packet with the one extra field under test.
+                        sess.sendRaw(DashCommands.activeNavPacket(
+                            maneuver = 0x14, primaryDist = 500, primaryUnit = DashCommands.NAV_UNIT_METERS,
+                            totalDist = 5000, totalUnit = DashCommands.NAV_UNIT_METERS,
+                            extraField = Triple(t, s, v),
+                        ))
+                        val elapsed = SystemClock.elapsedRealtime() - startElapsed
+                        val wall = iso.format(java.util.Date())
+                        DebugLog.i(TAG) { "NAVFIELDPROBE field=${hex(t)} sub=${hex(s)} val=${hex(v)} elapsedMs=$elapsed wall=$wall" }
+                        csv?.let { runCatching { it.appendText("${hex(t)},${hex(s)},${hex(v)},$elapsed,$wall,$dwellMs\n") } }
+                        appendLog("NAVFIELD $label — flash change?")
+                        delay(dwellMs)
+                    }
+                }
+                appendLog("NAV-FIELD PROBE done" + (csv?.let { " — saved ${it.name}" } ?: ""))
+            } finally {
+                _navFieldProbeRunning.value = false
+                _navFieldProbeLabel.value = null
+            }
+        }
+    }
+
+    fun stopNavFieldProbe() {
+        navFieldProbeJob?.cancel(); navFieldProbeJob = null
+        _navFieldProbeRunning.value = false
+        _navFieldProbeLabel.value = null
+        appendLog("NAV-FIELD PROBE stopped")
+    }
+
     private fun hex(v: Int) = "0x%02X".format(v)
 
     private fun appendLog(message: String) {
