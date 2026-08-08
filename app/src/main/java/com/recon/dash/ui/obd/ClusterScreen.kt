@@ -131,11 +131,11 @@ private fun ClusterCanvas(rpm: Float, speedKmh: Float, engine: EngineState) {
             }
             nc.drawText(s, x, y, p)
         }
-        // Big speed (the hero number).
-        text("${speedKmh.toInt()}", cx, cy + 20f, radius * 0.9f, Color.White, CYAN)
-        text("KM/H", cx, cy + radius * 0.55f, radius * 0.16f, CYAN, CYAN)
-        // RPM small, above.
-        text("${rpm.toInt()} RPM", cx, cy - radius * 0.45f, radius * 0.18f,
+        // Big speed (the hero number) — baseline pushed down so its tall glyphs clear the RPM line.
+        text("${speedKmh.toInt()}", cx, cy + radius * 0.28f, radius * 0.8f, Color.White, CYAN)
+        text("KM/H", cx, cy + radius * 0.58f, radius * 0.16f, CYAN, CYAN)
+        // RPM small, above — lifted higher so the speed digits never overlap it.
+        text("${rpm.toInt()} RPM", cx, cy - radius * 0.52f, radius * 0.18f,
             if (rpm >= 6500f) MAGENTA else CYAN, if (rpm >= 6500f) MAGENTA else CYAN)
 
         // ── Bottom bars: coolant (amber) + fuel-rate (magenta) ──
