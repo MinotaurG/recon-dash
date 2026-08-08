@@ -80,7 +80,7 @@ fun RoutePreviewScreen(
                     onStartNav = onStartNav,
                     onSelectAlternative = { viewModel.selectAlternative(it) },
                     onToggleAvoidTolls = { viewModel.toggleAvoidTolls() },
-                    onToggleAvoidHighways = { viewModel.toggleAvoidHighways() },
+                    onSetMode = { viewModel.setMode(it) },
                     onDownloadRegion = onDownloadRegion,
                 )
                 is RoutePreviewState.Error -> ErrorCard(s.message, onRetry = { viewModel.retry() })
@@ -131,7 +131,7 @@ private fun ReadyContent(
     onStartNav: () -> Unit,
     onSelectAlternative: (Int) -> Unit,
     onToggleAvoidTolls: () -> Unit,
-    onToggleAvoidHighways: () -> Unit,
+    onSetMode: (com.recon.dash.dash.nav.RideMode) -> Unit,
     onDownloadRegion: () -> Unit = {},
 ) {
     Column {
@@ -225,20 +225,31 @@ private fun ReadyContent(
             }
         }
 
-        // Routing option chips
-        Spacer(Modifier.height(12.dp))
+        // Ride mode presets (Valhalla motorcycle costing bundles). Horizontally scrollable so all
+        // presets fit on the narrow screen; the picked one recomputes the route.
+        Spacer(Modifier.height(16.dp))
+        Text("Ride mode", color = OnSurface.copy(alpha = 0.5f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(8.dp))
         Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            com.recon.dash.dash.nav.RideMode.entries.forEach { m ->
+                ToggleChip(
+                    label = m.label,
+                    selected = state.mode == m,
+                    onClick = { onSetMode(m) },
+                )
+            }
+        }
+
+        // Independent toll toggle (applies on top of any mode).
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ToggleChip(
                 label = "Avoid tolls",
                 selected = state.avoidTolls,
                 onClick = onToggleAvoidTolls,
-            )
-            ToggleChip(
-                label = "Avoid highways",
-                selected = state.avoidHighways,
-                onClick = onToggleAvoidHighways,
             )
         }
 

@@ -25,9 +25,33 @@ sealed class RouterResult {
     data class Failure(val error: RouterError) : RouterResult()
 }
 
+/**
+ * Ride mode — a preset of Valhalla motorcycle-costing values. Valhalla has no named "modes"; it's
+ * one `motorcycle` costing shaped by 0..1 preference knobs. These presets pick sensible bundles:
+ *   use_highways    0=avoid .. 1=prefer   (default 0.5 = neutral)
+ *   use_trails      willingness to use rough/unpaved tracks (motorcycle-specific)
+ *   avoidBadSurfaces 0=allow rough .. 1=strongly avoid unpaved
+ *   shortest        true = minimize distance, ignore time
+ * In every mode the `motorcycle` costing still honors OSM access tags, so it won't route onto a
+ * road tagged motorcycle=no (e.g. a bike-banned expressway) regardless of preset.
+ */
+enum class RideMode(
+    val label: String,
+    val useHighways: Double,
+    val useTrails: Double,
+    val avoidBadSurfaces: Double,
+    val shortest: Boolean,
+) {
+    FASTEST("Fastest", useHighways = 0.9, useTrails = 0.0, avoidBadSurfaces = 0.75, shortest = false),
+    BALANCED("Balanced", useHighways = 0.5, useTrails = 0.0, avoidBadSurfaces = 0.5, shortest = false),
+    AVOID_HIGHWAYS("Avoid highways", useHighways = 0.1, useTrails = 0.0, avoidBadSurfaces = 0.5, shortest = false),
+    EXPLORE("Explore", useHighways = 0.3, useTrails = 0.6, avoidBadSurfaces = 0.1, shortest = false),
+    SHORTEST("Shortest", useHighways = 0.5, useTrails = 0.2, avoidBadSurfaces = 0.25, shortest = true),
+}
+
 data class RouteOptions(
+    val mode: RideMode = RideMode.BALANCED,
     val avoidTolls: Boolean = false,
-    val avoidHighways: Boolean = false,
     val avoidFerries: Boolean = false,
     val alternativeRoutes: Boolean = true,
 )
@@ -161,8 +185,13 @@ class Router(private val context: Context) {
 
         val costingOptions = JSONObject()
         val moto = JSONObject()
+        val mode = options.mode
         moto.put("use_tolls", if (options.avoidTolls) 0.0 else 0.5)
-        moto.put("use_highways", if (options.avoidHighways) 0.1 else 0.5)
+        moto.put("use_highways", mode.useHighways)
+        moto.put("use_trails", mode.useTrails)
+        moto.put("avoid_bad_surfaces", mode.avoidBadSurfaces)
+        if (mode.shortest) moto.put("shortest", true)
+        moto.put("use_ferry", if (options.avoidFerries) 0.0 else 0.5)
         costingOptions.put("motorcycle", moto)
         root.put("costing_options", costingOptions)
 
