@@ -578,6 +578,92 @@ class DashViewModel @Inject constructor(
         appendLog("GLYPH PROBE stopped")
     }
 
+    // ── Glyph LABELER (ground-truth capture) ───────────────────────────────
+    // The timed probe only records the byte we SENT; the actual dash glyph was read off a video by
+    // the assistant (who can't see the dash) — that guessing produced wrong left/right & shapes.
+    // This is MANUAL-ADVANCE: it shows one code on the dash and WAITS. The rider looks at the dash
+    // and taps what they actually see (via recordGlyphLabel); the phone writes sent-byte + the
+    // rider's-read to a CSV. That is real ground truth — verified by human eyes on the hardware.
+    private val _glyphLabelActive = MutableStateFlow(false)
+    val glyphLabelActive = _glyphLabelActive.asStateFlow()
+    private val _glyphLabelCode = MutableStateFlow<Int?>(null)   // code currently shown on the dash
+    val glyphLabelCode = _glyphLabelCode.asStateFlow()
+    private val _glyphLabelProgress = MutableStateFlow(0)        // how many labeled so far
+    val glyphLabelProgress = _glyphLabelProgress.asStateFlow()
+
+    private var glyphLabelFrom = 0x00
+    private var glyphLabelTo = 0x32   // the usable distinct set (wraps ~0x32; see SPEC)
+    private var glyphLabelCsv: File? = null
+
+    /** Begin the manual glyph-labeling session. Shows the first code; rider taps what they see. */
+    fun startGlyphLabeler(from: Int = 0x00, to: Int = 0x32) {
+        val sess = session
+        if (sess == null || _connectionState.value != DashState.STREAMING) {
+            appendLog("Glyph labeler needs an active streaming session — connect first")
+            return
+        }
+        glyphLabelFrom = from; glyphLabelTo = to
+        glyphLabelCsv = runCatching {
+            val dir = File(context.filesDir, "glyph-label").apply { mkdirs() }
+            File(dir, "label-${System.currentTimeMillis()}.csv").also {
+                it.appendText("code_dec,code_hex,seen_label,wall_iso\n")
+            }
+        }.getOrNull()
+        _glyphLabelActive.value = true
+        _glyphLabelProgress.value = 0
+        appendLog("GLYPH LABELER start ${hex(from)}..${hex(to)} — tap what the dash shows for each")
+        showGlyphForLabeling(from)
+    }
+
+    private fun showGlyphForLabeling(code: Int) {
+        val sess = session ?: return
+        _glyphLabelCode.value = code
+        // Hold all other fields steady so ONLY the glyph changes (same as the timed probe).
+        sess.updateNavInfo(
+            maneuver = code,
+            primaryDist = 500, primaryUnit = DashCommands.NAV_UNIT_METERS,
+            totalDist = 5000, totalUnit = DashCommands.NAV_UNIT_METERS,
+        )
+        appendLog("LABEL ${hex(code)} — look at the dash, tap what you see")
+    }
+
+    /**
+     * Record the rider's read of the CURRENT code and advance to the next. [label] is the human
+     * ground truth (e.g. "turn_right", "sharp_left", "roundabout_3", "straight"); the app never
+     * interprets the glyph itself. Writes sent-byte + seen-label to the CSV + a greppable line.
+     */
+    fun recordGlyphLabel(label: String) {
+        if (!_glyphLabelActive.value) return
+        val code = _glyphLabelCode.value ?: return
+        val wall = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", java.util.Locale.US)
+            .format(java.util.Date())
+        DebugLog.i(TAG) { "GLYPHLABEL code=$code hex=${hex(code)} seen=$label" }
+        glyphLabelCsv?.let { runCatching { it.appendText("$code,${hex(code)},$label,$wall\n") } }
+        _glyphLabelProgress.value = _glyphLabelProgress.value + 1
+        val next = code + 1
+        if (next > glyphLabelTo) {
+            appendLog("GLYPH LABELER done — saved ${glyphLabelCsv?.name}")
+            stopGlyphLabeler()
+        } else {
+            showGlyphForLabeling(next)
+        }
+    }
+
+    /** Skip the current code without recording (e.g. dash showed nothing / unclear). */
+    fun skipGlyphLabel() {
+        if (!_glyphLabelActive.value) return
+        val code = _glyphLabelCode.value ?: return
+        glyphLabelCsv?.let { runCatching { it.appendText("$code,${hex(code)},SKIP,\n") } }
+        val next = code + 1
+        if (next > glyphLabelTo) stopGlyphLabeler() else showGlyphForLabeling(next)
+    }
+
+    fun stopGlyphLabeler() {
+        _glyphLabelActive.value = false
+        _glyphLabelCode.value = null
+        appendLog("GLYPH LABELER stopped")
+    }
+
     // ── Screen-focus probe (debug) ─────────────────────────────────────────
     // Finds the "switch the dash carousel to screen N" command so we can auto-open Nav / Phone /
     // Media instead of the rider joysticking to them. navStart = 06 80 01 0B, so 06 80 <byte> is

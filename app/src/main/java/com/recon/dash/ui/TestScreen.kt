@@ -42,6 +42,9 @@ fun TestScreen(
     val screenProbeCode by viewModel.screenProbeCode.collectAsStateWithLifecycle()
     val navFieldProbeRunning by viewModel.navFieldProbeRunning.collectAsStateWithLifecycle()
     val navFieldProbeLabel by viewModel.navFieldProbeLabel.collectAsStateWithLifecycle()
+    val glyphLabelActive by viewModel.glyphLabelActive.collectAsStateWithLifecycle()
+    val glyphLabelCode by viewModel.glyphLabelCode.collectAsStateWithLifecycle()
+    val glyphLabelProgress by viewModel.glyphLabelProgress.collectAsStateWithLifecycle()
 
     val isIdle = state == DashState.IDLE || state == DashState.ERROR
 
@@ -220,6 +223,27 @@ fun TestScreen(
                 }
                 Text(label, fontSize = 14.sp)
             }
+
+            // Glyph LABELER: ground-truth capture. The assistant can't see the dash, so the byte->
+            // glyph map was guessed from a video (wrong). Here the dash shows one code and YOU tap
+            // what you actually see; the phone records sent-byte + your-read. Builds a real table.
+            Spacer(Modifier.height(8.dp))
+            if (!glyphLabelActive) {
+                OutlinedButton(
+                    onClick = { viewModel.startGlyphLabeler() },
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldAccent),
+                ) { Text("Start glyph labeler (tap what you see)", fontSize = 14.sp) }
+            } else {
+                GlyphLabelerPanel(
+                    code = glyphLabelCode,
+                    progress = glyphLabelProgress,
+                    onLabel = { viewModel.recordGlyphLabel(it) },
+                    onSkip = { viewModel.skipGlyphLabel() },
+                    onStop = { viewModel.stopGlyphLabeler() },
+                )
+            }
         }
 
         Spacer(Modifier.height(20.dp))
@@ -252,6 +276,74 @@ fun TestScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
+ * Manual glyph-labeling panel. The dash shows one code (displayed big here); the rider taps the
+ * button matching what they ACTUALLY see on the dash. Records ground truth the assistant can't.
+ */
+@Composable
+private fun GlyphLabelerPanel(
+    code: Int?,
+    progress: Int,
+    onLabel: (String) -> Unit,
+    onSkip: () -> Unit,
+    onStop: () -> Unit,
+) {
+    // (label sent to CSV, button text). Covers direction + shape + roundabout + specials.
+    val options = listOf(
+        "straight" to "Straight", "slight_left" to "Slight L", "slight_right" to "Slight R",
+        "turn_left" to "Turn L", "turn_right" to "Turn R",
+        "sharp_left" to "Sharp L", "sharp_right" to "Sharp R",
+        "keep_left" to "Keep/Fork L", "keep_right" to "Keep/Fork R",
+        "uturn_left" to "U-turn L", "uturn_right" to "U-turn R",
+        "roundabout" to "Roundabout", "depart_arrive" to "Pin/Depart",
+        "lanes" to "Lanes", "blank" to "Blank/None", "other" to "Other/unclear",
+    )
+    Column(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(DarkSurface).padding(14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Dash shows: 0x%02X".format(code ?: 0),
+                color = GoldAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+            )
+            Text("$progress labeled", color = OnSurface.copy(alpha = 0.5f), fontSize = 12.sp)
+        }
+        Text(
+            "Look at the dash, tap what you see:",
+            color = OnSurface.copy(alpha = 0.6f), fontSize = 12.sp,
+        )
+        Spacer(Modifier.height(10.dp))
+        // Simple wrap grid, 3 per row.
+        options.chunked(3).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                row.forEach { (key, text) ->
+                    OutlinedButton(
+                        onClick = { onLabel(key) },
+                        modifier = Modifier.weight(1f).height(40.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 2.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = OnSurface),
+                    ) { Text(text, fontSize = 11.sp, maxLines = 1) }
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onSkip) { Text("Skip", color = OnSurface.copy(alpha = 0.6f), fontSize = 13.sp) }
+            TextButton(onClick = onStop) { Text("Stop", color = Color(0xFFCC6666), fontSize = 13.sp) }
+        }
     }
 }
 
