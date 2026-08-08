@@ -31,6 +31,7 @@ object Routes {
     const val HOME = "home"
     const val SEARCH = "search"
     const val NAV_MAP = "nav_map"
+    const val CLUSTER = "cluster"
     const val DASH = "dash"
     const val ROUTE_PREVIEW = "route_preview"
     const val ACTIVE_NAV = "active_nav"
@@ -89,6 +90,7 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
                     navController.navigate("${Routes.SEARCH}?saveSlot=${slot.name}")
                 },
                 onNavMapTap = { navController.navigate(Routes.NAV_MAP) },
+                onClusterTap = { navController.navigate(Routes.CLUSTER) },
                 onDashTap = { navController.navigate(Routes.DASH) },
                 onSettingsTap = { navController.navigate(Routes.SETTINGS) },
                 onRidesTap = { navController.navigate(Routes.RIDE_HISTORY) },
@@ -118,6 +120,9 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
                 onSearchTap = { navController.navigate("${Routes.SEARCH}?saveSlot=") },
                 onBack = { navController.popBackStack() },
             )
+        }
+        composable(Routes.CLUSTER) {
+            com.recon.dash.ui.obd.ClusterScreen(onBack = { navController.popBackStack() })
         }
         composable(
             route = "${Routes.ROUTE_PREVIEW}/{destName}/{destLat}/{destLng}/{originLat}/{originLng}",

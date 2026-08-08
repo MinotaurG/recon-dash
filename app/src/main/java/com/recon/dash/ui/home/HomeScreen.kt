@@ -59,6 +59,7 @@ fun HomeScreen(
     onFavoriteSlotTap: (FavoriteSlot) -> Unit,
     onDashTap: () -> Unit,
     onNavMapTap: () -> Unit = {},
+    onClusterTap: () -> Unit = {},
     onSettingsTap: () -> Unit = {},
     onRidesTap: () -> Unit = {},
     onGarageTap: () -> Unit = {},
@@ -119,6 +120,14 @@ fun HomeScreen(
             color = musicAppColor(musicApp),
             onClick = { launchMusicApp(context, musicApp) },
             appIconDrawable = musicDrawable,
+        ))
+        // Telemetry (cyberpunk OBD cluster)
+        add(HomeTile(
+            id = "cluster",
+            label = "Telemetry",
+            icon = Icons.Rounded.Speed,
+            color = Color(0xFF00E5FF),
+            onClick = onClusterTap,
         ))
         // Rides
         add(HomeTile(
