@@ -72,6 +72,12 @@ class ActiveNavViewModel @Inject constructor(
         private const val REROUTE_ACCURACY_GATE_M = 50f
         // If a real GPS fix arrived within this window, ignore NETWORK-provider fixes entirely.
         private const val GPS_FRESH_MS = 10_000L
+        // Cold-start freeze fix: FusedLocationProvider emits coarse ~90m network fixes ~6s apart
+        // while GPS warms (~30s). The old NETWORK gate only fired on the raw path (provider check);
+        // on the fused path every coarse fix moved the marker, freezing it on a wrong spot. Until we
+        // have a fix at least this accurate, DON'T move the map marker — hold the last good position
+        // (or the route origin). Matches Google/OsmAnd (they don't jump the dot to a coarse fix).
+        private const val MARKER_ACCURACY_GATE_M = 35f
     }
 
     private val _navState = MutableStateFlow(NavDisplayState())
@@ -143,6 +149,7 @@ class ActiveNavViewModel @Inject constructor(
         (context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager).isPowerSaveMode
 
     private fun startNavigation() {
+        hasHadReliableMarker = false   // new session: re-arm the cold-start marker gate
         // Keep GPS alive with the screen off for the WHOLE nav, independent of the dash. Previously
         // only the dash held this foreground/wakelock, so a flapping dash link froze GPS mid-ride.
         com.recon.dash.dash.DashKeepAliveService.startFor(
@@ -359,13 +366,23 @@ class ActiveNavViewModel @Inject constructor(
             location.latitude, location.longitude, speed, accuracy, bearing,
         ) ?: return
 
-        // When ON-route, show the snapped point (rides the line). When OFF-route, show the RAW
-        // GPS position + heading so the marker follows the rider away from the stale route
-        // instead of freezing on the old line's nearest point (the "stuck" bug).
-        if (progress.offRoute) {
+        // Marker accuracy gate (cold-start freeze fix): a coarse fix (~90m at start) must NOT move
+        // the marker to a wrong spot. If this fix is coarse AND we've already shown a good position,
+        // hold the marker where it is — the engine still consumed the fix above, we just don't
+        // display the bad point. The FIRST marker is allowed even if coarse (better a rough dot than
+        // none); once we've had a good fix, coarse ones are display-suppressed until accuracy recovers.
+        val markerReliable = accuracy <= MARKER_ACCURACY_GATE_M
+        if (markerReliable) hasHadReliableMarker = true
+        val suppressMarker = hasHadReliableMarker && !markerReliable
+        if (suppressMarker) {
+            com.recon.dash.util.NavLog.event("marker_hold", "acc=${accuracy.toInt()} reason=coarse")
+        } else if (progress.offRoute) {
+            // When OFF-route, show the RAW GPS position + heading so the marker follows the rider
+            // away from the stale route instead of freezing on the old line's nearest point.
             _riderPosition.value = rawPos
             if (location.hasBearing()) _riderBearing.value = location.bearing
         } else {
+            // ON-route: show the snapped point (rides the line).
             _riderPosition.value = progress.snapped
             _riderBearing.value = progress.bearing.toFloat()
         }
@@ -412,6 +429,7 @@ class ActiveNavViewModel @Inject constructor(
     @Volatile private var arrivedHandled = false
     @Volatile private var lastFixAtMs = 0L    // for logging inter-fix gaps (location-pipeline health)
     @Volatile private var lastGpsFixAtMs = 0L // last real GPS fix; gates out coarse NETWORK fixes
+    @Volatile private var hasHadReliableMarker = false // true once a sub-gate-accuracy fix was shown
 
     // Diagnostic: log screen on/off so the next ride can prove whether the GPS dropouts line up
     // with screen-off (Android suspending location delivery) vs. happening screen-on too (which
