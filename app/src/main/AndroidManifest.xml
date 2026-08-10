@@ -18,6 +18,13 @@
     <!-- Incoming-call notification on the dash: call state + contact-name lookup. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- ELM327 OBD-II dongle over Bluetooth (classic SPP). BLUETOOTH_CONNECT is runtime (API 31+);
+         the legacy BLUETOOTH/ADMIN cover <=API 30. neverForLocation: we don't derive location. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
 
     <application
         android:largeHeap="true"

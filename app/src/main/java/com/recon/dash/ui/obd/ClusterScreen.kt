@@ -7,8 +7,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import com.recon.dash.obd.Elm327Source.Reason
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -46,6 +48,8 @@ fun ClusterScreen(
     viewModel: ClusterViewModel = hiltViewModel(),
 ) {
     val engine by viewModel.engine.collectAsStateWithLifecycle()
+    val status by viewModel.status.collectAsStateWithLifecycle()
+    val reason by viewModel.reason.collectAsStateWithLifecycle()
 
     // Tween the needle values between 1 Hz-ish emissions so the arc/readouts glide, not step.
     val rpm by animateFloatAsState(
@@ -57,11 +61,18 @@ fun ClusterScreen(
         animationSpec = tween(400), label = "speed",
     )
 
+    // Live cluster only when the dongle is CONNECTED; otherwise a prompt (enable BT / connect OBD).
+    val connected = status == com.recon.dash.obd.TelemetryStatus.CONNECTED
+
     Box(
         modifier = Modifier.fillMaxSize().background(BG),
         contentAlignment = Alignment.Center,
     ) {
-        ClusterCanvas(rpm = rpm, speedKmh = speed, engine = engine)
+        if (connected) {
+            ClusterCanvas(rpm = rpm, speedKmh = speed, engine = engine)
+        } else {
+            ObdPrompt(status = status, reason = reason, onRetry = { viewModel.connect() })
+        }
 
         // Back button (top-left), unobtrusive.
         IconButton(
@@ -69,6 +80,85 @@ fun ClusterScreen(
             modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp),
         ) {
             Icon(Icons.Rounded.ArrowBack, "Back", tint = CYAN.copy(alpha = 0.6f))
+        }
+    }
+}
+
+/**
+ * Shown when the OBD dongle isn't delivering data. Maps the source's status/reason to an actionable
+ * prompt: enable Bluetooth (with a button that fires the system enable dialog + BLUETOOTH_CONNECT
+ * permission request), or "connect your OBD module", or connecting/retry.
+ */
+@Composable
+private fun ObdPrompt(
+    status: com.recon.dash.obd.TelemetryStatus,
+    reason: com.recon.dash.obd.Elm327Source.Reason,
+    onRetry: () -> Unit,
+) {
+    // System "enable Bluetooth" dialog; retry the connection when it returns.
+    val enableBt = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { onRetry() }
+    // BLUETOOTH_CONNECT runtime permission (API 31+); retry once granted.
+    val askPerm = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { onRetry() }
+
+    val connecting = status == com.recon.dash.obd.TelemetryStatus.CONNECTING
+    val title: String
+    val body: String
+    var action: (() -> Unit)? = null
+    var actionLabel = "Retry"
+    when {
+        connecting -> { title = "Connecting to OBD…"; body = "Reading from your OBD-II module." }
+        reason == Reason.BT_OFF -> {
+            title = "Turn on Bluetooth"
+            body = "Bluetooth is off. Enable it to connect your OBD-II module."
+            actionLabel = "Enable Bluetooth"
+            action = { enableBt.launch(android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)) }
+        }
+        reason == Reason.NO_PERMISSION -> {
+            title = "Bluetooth permission needed"
+            body = "Allow Bluetooth so Recon Dash can read the OBD-II module."
+            actionLabel = "Grant permission"
+            action = { askPerm.launch(android.Manifest.permission.BLUETOOTH_CONNECT) }
+        }
+        reason == Reason.NO_DEVICE -> {
+            title = "Connect your OBD module"
+            body = "Plug the ELM327 OBD-II dongle into the bike, pair it in Bluetooth settings, then retry to access live telemetry."
+            action = onRetry
+        }
+        else -> {  // CONNECT_FAILED / generic
+            title = "OBD not connected"
+            body = "Couldn't reach the OBD-II module. Make sure it's plugged in and powered, then retry."
+            action = onRetry
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+    ) {
+        Icon(
+            Icons.Rounded.Speed,
+            contentDescription = null, tint = CYAN.copy(alpha = 0.5f),
+            modifier = Modifier.size(64.dp),
+        )
+        Spacer(Modifier.height(20.dp))
+        androidx.compose.material3.Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(10.dp))
+        androidx.compose.material3.Text(
+            body, color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        if (!connecting && action != null) {
+            Spacer(Modifier.height(24.dp))
+            androidx.compose.material3.Button(
+                onClick = action!!,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = CYAN, contentColor = BG),
+            ) { androidx.compose.material3.Text(actionLabel, fontWeight = FontWeight.SemiBold) }
         }
     }
 }
