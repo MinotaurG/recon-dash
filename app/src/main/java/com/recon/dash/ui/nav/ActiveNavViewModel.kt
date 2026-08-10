@@ -21,6 +21,7 @@ import com.recon.dash.data.RideRecorder
 import com.recon.dash.util.DebugLog
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -501,7 +502,10 @@ class ActiveNavViewModel @Inject constructor(
     /** Fire a one-off divergence capture for [route] from [from]; swallows all failures. */
     private fun captureDivergence(route: Route, from: GeoPoint, ctx: String) {
         if (!divergenceCapture.enabled) return
-        viewModelScope.launch {
+        // MUST run off the main thread: the route comparison is CPU-heavy (grew to a multi-minute
+        // main-thread ANR on a 1434km route — GeoPoint.projectOnSegment over ~72k×70k points). This
+        // is the debug-only Google comparison; it must never touch the UI thread.
+        viewModelScope.launch(Dispatchers.Default) {
             runCatching {
                 divergenceCapture.capture(route, from, GeoPoint(destLat, destLng), ctx, System.currentTimeMillis())
             }.onFailure { DebugLog.w(TAG) { "Divergence capture ($ctx) threw: ${it.message}" } }
@@ -513,7 +517,7 @@ class ActiveNavViewModel @Inject constructor(
     private fun startDivergenceTicker() {
         if (!divergenceCapture.enabled) return
         divergenceTickJob?.cancel()
-        divergenceTickJob = viewModelScope.launch {
+        divergenceTickJob = viewModelScope.launch(Dispatchers.Default) {
             while (true) {
                 kotlinx.coroutines.delay(com.recon.dash.dash.nav.DivergenceCapture.PERIODIC_INTERVAL_MS)
                 val current = route ?: continue
