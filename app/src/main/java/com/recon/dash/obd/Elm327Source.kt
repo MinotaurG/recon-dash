@@ -55,22 +55,28 @@ class Elm327Source(private val context: Context) : TelemetrySource {
         if (!hasConnectPermission()) { fail(Reason.NO_PERMISSION); return }
         if (!adapter.isEnabled) { fail(Reason.BT_OFF); return }
 
-        val device = findObdDevice(adapter)
-        if (device == null) { fail(Reason.NO_DEVICE); return }
+        // Ordered candidates: name-matched OBD dongles first, then ALL other paired devices as a
+        // fallback (so a dongle with an unusual Bluetooth name still connects — no NO_DEVICE
+        // dead-end at the bike). Only fail NO_DEVICE if there are no paired devices at all.
+        val candidates = obdCandidates(adapter)
+        if (candidates.isEmpty()) { fail(Reason.NO_DEVICE); return }
 
-        coroutineScope {
-            withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
+            for (device in candidates) {
+                if (!running) return@withContext
                 try {
-                    connectAndPoll(device)
+                    DebugLog.i(TAG) { "Trying OBD device: ${runCatching { device.name }.getOrNull()}" }
+                    connectAndPoll(device)   // blocks in the poll loop while connected
+                    return@withContext        // connected + ran until stopped
                 } catch (e: SecurityException) {
-                    DebugLog.w(TAG) { "BT permission lost mid-connect: ${e.message}" }; fail(Reason.NO_PERMISSION)
+                    DebugLog.w(TAG) { "BT permission lost: ${e.message}" }; fail(Reason.NO_PERMISSION); return@withContext
                 } catch (e: Exception) {
-                    DebugLog.w(TAG) { "OBD connect/poll failed: ${e.message}" }
-                    if (running) fail(Reason.CONNECT_FAILED)
-                } finally {
+                    DebugLog.w(TAG) { "Device ${runCatching { device.name }.getOrNull()} failed: ${e.message}; trying next" }
                     runCatching { socket?.close() }; socket = null
+                    // try the next candidate
                 }
             }
+            if (running) fail(Reason.CONNECT_FAILED)  // exhausted all candidates
         }
     }
 
@@ -92,14 +98,17 @@ class Elm327Source(private val context: Context) : TelemetrySource {
             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
             PackageManager.PERMISSION_GRANTED
 
-    /** First paired device whose name looks like an OBD/ELM327 dongle. */
-    private fun findObdDevice(adapter: BluetoothAdapter): BluetoothDevice? = runCatching {
-        adapter.bondedDevices?.firstOrNull { d ->
+    /** Paired devices to try, OBD-named first then all others as a fallback. */
+    private fun obdCandidates(adapter: BluetoothAdapter): List<BluetoothDevice> = runCatching {
+        val paired = adapter.bondedDevices?.toList() ?: emptyList()
+        fun looksObd(d: BluetoothDevice): Boolean {
             val n = (d.name ?: "").uppercase()
-            n.contains("OBD") || n.contains("ELM") || n.contains("VLINK") || n.contains("VEEPEAK") ||
-                n.contains("VGATE") || n.contains("ICAR") || n.contains("KONNWEI")
+            return n.contains("OBD") || n.contains("ELM") || n.contains("VLINK") || n.contains("VEEPEAK") ||
+                n.contains("VGATE") || n.contains("ICAR") || n.contains("KONNWEI") || n.contains("OBDII")
         }
-    }.getOrNull()
+        val (named, rest) = paired.partition { looksObd(it) }
+        named + rest   // name-matched first, then everything else
+    }.getOrElse { emptyList() }
 
     private suspend fun connectAndPoll(device: BluetoothDevice) {
         val sock = device.createRfcommSocketToServiceRecord(SPP_UUID)
