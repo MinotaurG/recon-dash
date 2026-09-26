@@ -40,6 +40,8 @@ fun PermissionsScreen(
     var bgLocationGranted by remember { mutableStateOf(false) }
     var notifListenerGranted by remember { mutableStateOf(false) }
     var notifPostGranted by remember { mutableStateOf(true) }
+    // Phone (call notifications on the dash) is OPTIONAL — it does NOT gate "Continue".
+    var phoneGranted by remember { mutableStateOf(false) }
 
     fun checkPermissions() {
         locationGranted = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
@@ -53,6 +55,8 @@ fun PermissionsScreen(
             notifPostGranted = context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
         }
+        phoneGranted = context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
     LaunchedEffect(Unit) { checkPermissions() }
@@ -69,6 +73,11 @@ fun PermissionsScreen(
         ActivityResultContracts.RequestPermission()
     ) { checkPermissions() }
 
+    val phoneLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { checkPermissions() }
+
+    // Phone is intentionally NOT part of allGranted — it's an optional convenience.
     val allGranted = locationGranted && bgLocationGranted && notifListenerGranted && notifPostGranted
 
     LaunchedEffect(allGranted) {
@@ -118,6 +127,17 @@ fun PermissionsScreen(
                 action = { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
             ))
         }
+        add(PermissionItem(
+            title = "Phone (optional)",
+            description = "Show incoming calls on the dash",
+            granted = phoneGranted,
+            action = {
+                phoneLauncher.launch(arrayOf(
+                    Manifest.permission.READ_PHONE_STATE,
+                    Manifest.permission.READ_CONTACTS,
+                ))
+            },
+        ))
     }
 
     Column(

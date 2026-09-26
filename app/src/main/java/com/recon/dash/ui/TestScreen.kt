@@ -38,6 +38,13 @@ fun TestScreen(
     val pendingPairing by viewModel.pendingPairingSsid.collectAsStateWithLifecycle()
     val glyphProbeRunning by viewModel.glyphProbeRunning.collectAsStateWithLifecycle()
     val glyphProbeCode by viewModel.glyphProbeCode.collectAsStateWithLifecycle()
+    val screenProbeRunning by viewModel.screenProbeRunning.collectAsStateWithLifecycle()
+    val screenProbeCode by viewModel.screenProbeCode.collectAsStateWithLifecycle()
+    val navFieldProbeRunning by viewModel.navFieldProbeRunning.collectAsStateWithLifecycle()
+    val navFieldProbeLabel by viewModel.navFieldProbeLabel.collectAsStateWithLifecycle()
+    val glyphLabelActive by viewModel.glyphLabelActive.collectAsStateWithLifecycle()
+    val glyphLabelCode by viewModel.glyphLabelCode.collectAsStateWithLifecycle()
+    val glyphLabelProgress by viewModel.glyphLabelProgress.collectAsStateWithLifecycle()
 
     val isIdle = state == DashState.IDLE || state == DashState.ERROR
 
@@ -145,8 +152,10 @@ fun TestScreen(
             Text("Telemetry Lab", fontSize = 14.sp)
         }
 
-        // Glyph probe: sweeps maneuver codes 0x00..0x2F to the dash (4s each) so we can
-        // photograph each turn glyph and build the code map. Only useful while streaming.
+        // Glyph probe: sweeps maneuver codes 0x00..0x40 to the dash (5s each) so we can
+        // photograph each turn glyph and build the code map. Self-labeling: writes a CSV
+        // (filesDir/glyph-probe/) + greppable GLYPHMAP logcat lines to anchor code<->frame
+        // exactly, no alignment guesswork. Only useful while streaming.
         if (state == DashState.STREAMING) {
             Spacer(Modifier.height(12.dp))
             OutlinedButton(
@@ -167,6 +176,73 @@ fun TestScreen(
                     else -> "Start glyph probe (0x00-0x40)"
                 }
                 Text(label, fontSize = 14.sp)
+            }
+
+            // Screen-focus probe: sweeps 06 80 xx to find the "switch carousel to Nav/Phone/Media"
+            // command so those screens can auto-open. Watch the dash; note which value switched it.
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    if (screenProbeRunning) viewModel.stopScreenProbe()
+                    else viewModel.startScreenProbe()
+                },
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (screenProbeRunning) Color(0xFFCC6666) else GoldAccent,
+                ),
+            ) {
+                val label = when {
+                    screenProbeRunning && screenProbeCode != null ->
+                        "Stop screen probe  (sub 06 0x%02X)".format(screenProbeCode)
+                    screenProbeRunning -> "Stop screen probe"
+                    else -> "Start screen probe (06 family sweep)"
+                }
+                Text(label, fontSize = 14.sp)
+            }
+
+            // Nav-field probe: sweeps unmapped nav TLVs to find the arrow color/flash control
+            // (arrow flashes red constantly today). Watch for the flash to calm / change color.
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    if (navFieldProbeRunning) viewModel.stopNavFieldProbe()
+                    else viewModel.startNavFieldProbe()
+                },
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (navFieldProbeRunning) Color(0xFFCC6666) else GoldAccent,
+                ),
+            ) {
+                val label = when {
+                    navFieldProbeRunning && navFieldProbeLabel != null ->
+                        "Stop field probe  ($navFieldProbeLabel)"
+                    navFieldProbeRunning -> "Stop nav-field probe"
+                    else -> "Start nav-field probe (flash/color)"
+                }
+                Text(label, fontSize = 14.sp)
+            }
+
+            // Glyph LABELER: ground-truth capture. The assistant can't see the dash, so the byte->
+            // glyph map was guessed from a video (wrong). Here the dash shows one code and YOU tap
+            // what you actually see; the phone records sent-byte + your-read. Builds a real table.
+            Spacer(Modifier.height(8.dp))
+            if (!glyphLabelActive) {
+                OutlinedButton(
+                    onClick = { viewModel.startGlyphLabeler() },
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldAccent),
+                ) { Text("Start glyph labeler (tap what you see)", fontSize = 14.sp) }
+            } else {
+                GlyphLabelerPanel(
+                    code = glyphLabelCode,
+                    progress = glyphLabelProgress,
+                    onLabel = { viewModel.recordGlyphLabel(it) },
+                    onSkip = { viewModel.skipGlyphLabel() },
+                    onStop = { viewModel.stopGlyphLabeler() },
+                )
             }
         }
 
@@ -200,6 +276,74 @@ fun TestScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
+ * Manual glyph-labeling panel. The dash shows one code (displayed big here); the rider taps the
+ * button matching what they ACTUALLY see on the dash. Records ground truth the assistant can't.
+ */
+@Composable
+private fun GlyphLabelerPanel(
+    code: Int?,
+    progress: Int,
+    onLabel: (String) -> Unit,
+    onSkip: () -> Unit,
+    onStop: () -> Unit,
+) {
+    // (label sent to CSV, button text). Covers direction + shape + roundabout + specials.
+    val options = listOf(
+        "straight" to "Straight", "slight_left" to "Slight L", "slight_right" to "Slight R",
+        "turn_left" to "Turn L", "turn_right" to "Turn R",
+        "sharp_left" to "Sharp L", "sharp_right" to "Sharp R",
+        "keep_left" to "Keep/Fork L", "keep_right" to "Keep/Fork R",
+        "uturn_left" to "U-turn L", "uturn_right" to "U-turn R",
+        "roundabout" to "Roundabout", "depart_arrive" to "Pin/Depart",
+        "lanes" to "Lanes", "blank" to "Blank/None", "other" to "Other/unclear",
+    )
+    Column(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(DarkSurface).padding(14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Dash shows: 0x%02X".format(code ?: 0),
+                color = GoldAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+            )
+            Text("$progress labeled", color = OnSurface.copy(alpha = 0.5f), fontSize = 12.sp)
+        }
+        Text(
+            "Look at the dash, tap what you see:",
+            color = OnSurface.copy(alpha = 0.6f), fontSize = 12.sp,
+        )
+        Spacer(Modifier.height(10.dp))
+        // Simple wrap grid, 3 per row.
+        options.chunked(3).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                row.forEach { (key, text) ->
+                    OutlinedButton(
+                        onClick = { onLabel(key) },
+                        modifier = Modifier.weight(1f).height(40.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 2.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = OnSurface),
+                    ) { Text(text, fontSize = 11.sp, maxLines = 1) }
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onSkip) { Text("Skip", color = OnSurface.copy(alpha = 0.6f), fontSize = 13.sp) }
+            TextButton(onClick = onStop) { Text("Stop", color = Color(0xFFCC6666), fontSize = 13.sp) }
+        }
     }
 }
 

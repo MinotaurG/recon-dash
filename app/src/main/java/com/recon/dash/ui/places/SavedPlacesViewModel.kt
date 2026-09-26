@@ -33,4 +33,20 @@ class SavedPlacesViewModel @Inject constructor(
     fun clear(slot: FavoriteSlot) {
         viewModelScope.launch { favoriteRepo.delete(slot) }
     }
+
+    /**
+     * Update the display name and/or icon of an existing saved place. No-op if the slot isn't set
+     * yet (you set a place's location first via search, then customize name/icon here).
+     */
+    fun updateNameAndIcon(slot: FavoriteSlot, name: String, iconKey: String) {
+        viewModelScope.launch {
+            val existing = favoriteRepo.getBySlot(slot).getOrNull() ?: return@launch
+            favoriteRepo.save(
+                existing.copy(
+                    name = name.ifBlank { existing.name },
+                    icon = iconKey,
+                )
+            )
+        }
+    }
 }

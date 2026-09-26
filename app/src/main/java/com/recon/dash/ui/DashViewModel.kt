@@ -24,6 +24,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 import javax.inject.Inject
 
 @HiltViewModel
@@ -253,6 +254,7 @@ class DashViewModel @Inject constructor(
         bridge?.stopNavigation()
         bridge = null
         MediaSessionListener.stop()
+        com.recon.dash.media.CallStateListener.stop()
         renderJob?.cancel(); renderJob = null
         stateCollectJob?.cancel(); stateCollectJob = null
         wifiCollectJob?.cancel(); wifiCollectJob = null
@@ -330,6 +332,7 @@ class DashViewModel @Inject constructor(
         val b = NavDashBridge(sess, viewModelScope)
         bridge = b
         MediaSessionListener.start(context)
+        com.recon.dash.media.CallStateListener.start(context)
         b.startMediaForwarding()
         observeNavSession(b)
         sess.startStreaming()
@@ -428,21 +431,24 @@ class DashViewModel @Inject constructor(
                 enc.renderFrame { canvas ->
                     if (navigating && progress != null) {
                         val dest = route?.destination
-                        // Use the SHARED snapped progress: rider rides the snapped line, bearing
-                        // is travel-up, and the route is split into traveled (grey) + ahead (blue).
+                        // Use the SHARED progress: the marker rides the line while on it and shows
+                        // the real GPS position once off it (same as the phone); bearing is
+                        // travel-up; the route is split into traveled (grey) + ahead (blue).
+                        val marker = progress.markerPosition
                         renderer.draw(canvas, MapRenderer.Frame(
-                            centerLat = progress.snapped.lat,
-                            centerLng = progress.snapped.lng,
+                            centerLat = marker.lat,
+                            centerLng = marker.lng,
                             zoom = 17,
                             headingUp = true,
-                            heading = progress.bearing.toFloat(),
-                            riderLat = progress.snapped.lat,
-                            riderLng = progress.snapped.lng,
+                            heading = progress.markerBearing.toFloat(),
+                            riderLat = marker.lat,
+                            riderLng = marker.lng,
                             destLat = dest?.lat,
                             destLng = dest?.lng,
                             destName = destName.ifBlank { null },
                             route = progress.aheadGeometry,
                             travelledRoute = progress.traveledGeometry,
+                            rerouting = progress.offRoute,
                         ))
                     } else if (idle != null) {
                         idle.draw(
@@ -510,8 +516,16 @@ class DashViewModel @Inject constructor(
      * AND 0x3C — a code the real RE app was observed sending in a captured route card
      * (see DashCommands template + OpenDash notes), our best lead for a real glyph.
      * Neither OpenDash nor us has verified anything beyond 0x0B; this sweep is how we do it.
+     *
+     * SELF-LABELING: unlike the earlier in-memory-only marker, every code is written to a CSV
+     * on disk (filesDir/glyph-probe/probe-<startMs>.csv) AND emitted as a distinctive greppable
+     * "GLYPHMAP" logcat line. That gives an exact code<->timestamp anchor to align against a
+     * video/photo capture afterwards, with NO alignment guesswork:
+     *   - Video: elapsedMs (from the CSV) maps straight to the video second.
+     *   - Photos: the wall-clock column aligns with photo EXIF time.
+     *   - Live:  `adb logcat -s DashViewModel | grep GLYPHMAP` captures it in real time.
      */
-    fun startGlyphProbe(from: Int = 0x00, to: Int = 0x40, dwellMs: Long = 4_000L) {
+    fun startGlyphProbe(from: Int = 0x00, to: Int = 0x40, dwellMs: Long = 5_000L) {
         val sess = session
         if (sess == null || _connectionState.value != DashState.STREAMING) {
             appendLog("Glyph probe needs an active streaming session — connect first")
@@ -520,7 +534,19 @@ class DashViewModel @Inject constructor(
         if (glyphProbeJob?.isActive == true) return
         glyphProbeJob = viewModelScope.launch {
             _glyphProbeRunning.value = true
-            appendLog("GLYPH PROBE start ${hex(from)}..${hex(to)} @ ${dwellMs}ms — watch the dash")
+            // One CSV per run; header documents the columns. Failure to open the file must NOT
+            // abort the probe (the logcat GLYPHMAP line is a second, independent record).
+            val startWall = System.currentTimeMillis()
+            val startElapsed = SystemClock.elapsedRealtime()
+            val csv = runCatching {
+                val dir = File(context.filesDir, "glyph-probe").apply { mkdirs() }
+                File(dir, "probe-$startWall.csv").also {
+                    it.appendText("code_dec,code_hex,elapsed_ms,wall_iso,dwell_ms\n")
+                }
+            }.getOrNull()
+            val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", java.util.Locale.US)
+            appendLog("GLYPH PROBE start ${hex(from)}..${hex(to)} @ ${dwellMs}ms" +
+                (csv?.let { " -> ${it.name}" } ?: " (csv open failed; logcat GLYPHMAP still active)"))
             try {
                 for (code in from..to) {
                     if (!isActive || session == null) break
@@ -532,10 +558,15 @@ class DashViewModel @Inject constructor(
                         primaryDist = 500, primaryUnit = DashCommands.NAV_UNIT_METERS,
                         totalDist = 5000, totalUnit = DashCommands.NAV_UNIT_METERS,
                     )
-                    appendLog("GLYPH ${hex(code)} (${code}) — photograph now")
+                    val elapsed = SystemClock.elapsedRealtime() - startElapsed
+                    val wall = iso.format(java.util.Date())
+                    // Greppable one-liner for live `adb logcat -s DashViewModel | grep GLYPHMAP`.
+                    DebugLog.i(TAG) { "GLYPHMAP code=$code hex=${hex(code)} elapsedMs=$elapsed wall=$wall" }
+                    csv?.let { runCatching { it.appendText("$code,${hex(code)},$elapsed,$wall,$dwellMs\n") } }
+                    appendLog("GLYPH ${hex(code)} (${code}) @ ${elapsed}ms — photograph now")
                     delay(dwellMs)
                 }
-                appendLog("GLYPH PROBE done")
+                appendLog("GLYPH PROBE done" + (csv?.let { " — saved ${it.name}" } ?: ""))
             } finally {
                 _glyphProbeRunning.value = false
                 _glyphProbeCode.value = null
@@ -548,6 +579,228 @@ class DashViewModel @Inject constructor(
         _glyphProbeRunning.value = false
         _glyphProbeCode.value = null
         appendLog("GLYPH PROBE stopped")
+    }
+
+    // ── Glyph LABELER (ground-truth capture) ───────────────────────────────
+    // The timed probe only records the byte we SENT; the actual dash glyph was read off a video by
+    // the assistant (who can't see the dash) — that guessing produced wrong left/right & shapes.
+    // This is MANUAL-ADVANCE: it shows one code on the dash and WAITS. The rider looks at the dash
+    // and taps what they actually see (via recordGlyphLabel); the phone writes sent-byte + the
+    // rider's-read to a CSV. That is real ground truth — verified by human eyes on the hardware.
+    private val _glyphLabelActive = MutableStateFlow(false)
+    val glyphLabelActive = _glyphLabelActive.asStateFlow()
+    private val _glyphLabelCode = MutableStateFlow<Int?>(null)   // code currently shown on the dash
+    val glyphLabelCode = _glyphLabelCode.asStateFlow()
+    private val _glyphLabelProgress = MutableStateFlow(0)        // how many labeled so far
+    val glyphLabelProgress = _glyphLabelProgress.asStateFlow()
+
+    private var glyphLabelFrom = 0x00
+    private var glyphLabelTo = 0x32   // the usable distinct set (wraps ~0x32; see SPEC)
+    private var glyphLabelCsv: File? = null
+
+    /** Begin the manual glyph-labeling session. Shows the first code; rider taps what they see. */
+    fun startGlyphLabeler(from: Int = 0x00, to: Int = 0x32) {
+        val sess = session
+        if (sess == null || _connectionState.value != DashState.STREAMING) {
+            appendLog("Glyph labeler needs an active streaming session — connect first")
+            return
+        }
+        glyphLabelFrom = from; glyphLabelTo = to
+        glyphLabelCsv = runCatching {
+            val dir = File(context.filesDir, "glyph-label").apply { mkdirs() }
+            File(dir, "label-${System.currentTimeMillis()}.csv").also {
+                it.appendText("code_dec,code_hex,seen_label,wall_iso\n")
+            }
+        }.getOrNull()
+        _glyphLabelActive.value = true
+        _glyphLabelProgress.value = 0
+        appendLog("GLYPH LABELER start ${hex(from)}..${hex(to)} — tap what the dash shows for each")
+        showGlyphForLabeling(from)
+    }
+
+    private fun showGlyphForLabeling(code: Int) {
+        val sess = session ?: return
+        _glyphLabelCode.value = code
+        // Hold all other fields steady so ONLY the glyph changes (same as the timed probe).
+        sess.updateNavInfo(
+            maneuver = code,
+            primaryDist = 500, primaryUnit = DashCommands.NAV_UNIT_METERS,
+            totalDist = 5000, totalUnit = DashCommands.NAV_UNIT_METERS,
+        )
+        appendLog("LABEL ${hex(code)} — look at the dash, tap what you see")
+    }
+
+    /**
+     * Record the rider's read of the CURRENT code and advance to the next. [label] is the human
+     * ground truth (e.g. "turn_right", "sharp_left", "roundabout_3", "straight"); the app never
+     * interprets the glyph itself. Writes sent-byte + seen-label to the CSV + a greppable line.
+     */
+    fun recordGlyphLabel(label: String) {
+        if (!_glyphLabelActive.value) return
+        val code = _glyphLabelCode.value ?: return
+        val wall = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", java.util.Locale.US)
+            .format(java.util.Date())
+        DebugLog.i(TAG) { "GLYPHLABEL code=$code hex=${hex(code)} seen=$label" }
+        glyphLabelCsv?.let { runCatching { it.appendText("$code,${hex(code)},$label,$wall\n") } }
+        _glyphLabelProgress.value = _glyphLabelProgress.value + 1
+        val next = code + 1
+        if (next > glyphLabelTo) {
+            appendLog("GLYPH LABELER done — saved ${glyphLabelCsv?.name}")
+            stopGlyphLabeler()
+        } else {
+            showGlyphForLabeling(next)
+        }
+    }
+
+    /** Skip the current code without recording (e.g. dash showed nothing / unclear). */
+    fun skipGlyphLabel() {
+        if (!_glyphLabelActive.value) return
+        val code = _glyphLabelCode.value ?: return
+        glyphLabelCsv?.let { runCatching { it.appendText("$code,${hex(code)},SKIP,\n") } }
+        val next = code + 1
+        if (next > glyphLabelTo) stopGlyphLabeler() else showGlyphForLabeling(next)
+    }
+
+    fun stopGlyphLabeler() {
+        _glyphLabelActive.value = false
+        _glyphLabelCode.value = null
+        appendLog("GLYPH LABELER stopped")
+    }
+
+    // ── Screen-focus probe (debug) ─────────────────────────────────────────
+    // Finds the "switch the dash carousel to screen N" command so we can auto-open Nav / Phone /
+    // Media instead of the rider joysticking to them. navStart = 06 80 01 0B, so 06 80 <byte> is
+    // our best lead. This sweeps candidate bytes; you WATCH the dash and note which value jumps it
+    // to Nav/Phone/Media. Self-labeling (SCREENPROBE logcat + CSV) so the value that worked is
+    // recoverable exactly. Additive: uses sendRaw, touches no proven send path.
+    private var screenProbeJob: Job? = null
+    private val _screenProbeRunning = MutableStateFlow(false)
+    val screenProbeRunning = _screenProbeRunning.asStateFlow()
+    private val _screenProbeCode = MutableStateFlow<Int?>(null)
+    val screenProbeCode = _screenProbeCode.asStateFlow()
+
+    fun startScreenProbe(dwellMs: Long = 5_000L) {
+        val sess = session
+        if (sess == null || _connectionState.value != DashState.STREAMING) {
+            appendLog("Screen probe needs an active streaming session — connect first")
+            return
+        }
+        if (screenProbeJob?.isActive == true) return
+        // A first sweep proved 06 80 <byte> does NOT switch screens. Now walk the 06-command family
+        // over sub-codes we DON'T already use (01,03,04,05,08,0D,0F,10,11 are live nav/projection
+        // fields — skip them so we don't disrupt the session), each with a few candidate values.
+        val usedSubs = setOf(0x01, 0x03, 0x04, 0x05, 0x08, 0x0A, 0x0D, 0x0F, 0x10, 0x11, 0x12, 0x80)
+        val subs = (0x00..0x30).filter { it !in usedSubs }
+        val values = listOf(0x00, 0x01, 0x02, 0x55)
+        screenProbeJob = viewModelScope.launch {
+            _screenProbeRunning.value = true
+            val startWall = System.currentTimeMillis()
+            val startElapsed = SystemClock.elapsedRealtime()
+            val csv = runCatching {
+                val dir = File(context.filesDir, "screen-probe").apply { mkdirs() }
+                File(dir, "screen-$startWall.csv").also {
+                    it.appendText("sub_hex,value_hex,elapsed_ms,wall_iso,dwell_ms\n")
+                }
+            }.getOrNull()
+            val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", java.util.Locale.US)
+            appendLog("SCREEN PROBE start — sweeping 06 <sub> <val> @ ${dwellMs}ms — watch the dash carousel")
+            try {
+                for (sub in subs) {
+                    for (v in values) {
+                        if (!isActive || session == null) break
+                        _screenProbeCode.value = sub
+                        sess.sendRaw(DashCommands.screenFocusProbe(sub, v))
+                        val elapsed = SystemClock.elapsedRealtime() - startElapsed
+                        val wall = iso.format(java.util.Date())
+                        DebugLog.i(TAG) { "SCREENPROBE sub=${hex(sub)} val=${hex(v)} elapsedMs=$elapsed wall=$wall (sent 06 ${hex(sub)} ${hex(v)})" }
+                        csv?.let { runCatching { it.appendText("${hex(sub)},${hex(v)},$elapsed,$wall,$dwellMs\n") } }
+                        appendLog("SCREEN 06 ${hex(sub)} ${hex(v)} — note if the dash switched screen")
+                        delay(dwellMs)
+                    }
+                }
+                appendLog("SCREEN PROBE done" + (csv?.let { " — saved ${it.name}" } ?: ""))
+            } finally {
+                _screenProbeRunning.value = false
+                _screenProbeCode.value = null
+            }
+        }
+    }
+
+    fun stopScreenProbe() {
+        screenProbeJob?.cancel(); screenProbeJob = null
+        _screenProbeRunning.value = false
+        _screenProbeCode.value = null
+        appendLog("SCREEN PROBE stopped")
+    }
+
+    // ── Nav-field (color / flash) probe (debug) ────────────────────────────
+    // The turn arrow flashes red constantly regardless of distance. The RE-app route-card template
+    // carries fields we DON'T send from activeNavPacket (05 0C=04, 05 07=30, 05 54=30) — one likely
+    // controls arrow color / flash / urgency. This holds a steady maneuver (0x14, 500m) and sweeps
+    // candidate (field,value) pairs one at a time; WATCH whether the arrow stops flashing / changes
+    // color, and note the pair. Self-labeling (NAVFIELDPROBE logcat + CSV). Additive via sendRaw.
+    private var navFieldProbeJob: Job? = null
+    private val _navFieldProbeRunning = MutableStateFlow(false)
+    val navFieldProbeRunning = _navFieldProbeRunning.asStateFlow()
+    private val _navFieldProbeLabel = MutableStateFlow<String?>(null)
+    val navFieldProbeLabel = _navFieldProbeLabel.asStateFlow()
+
+    fun startNavFieldProbe(dwellMs: Long = 5_000L) {
+        val sess = session
+        if (sess == null || _connectionState.value != DashState.STREAMING) {
+            appendLog("Nav-field probe needs an active streaming session — connect first")
+            return
+        }
+        if (navFieldProbeJob?.isActive == true) return
+        // Candidate (field, sub) pairs from the template's unmapped fields, each swept over a few
+        // values. Order: most-likely (05 0C) first.
+        val fields = listOf(0x05 to 0x0C, 0x05 to 0x07, 0x05 to 0x54, 0x06 to 0x08, 0x06 to 0x10)
+        val values = listOf(0x00, 0x01, 0x04, 0x30, 0x55, 0xAA)
+        navFieldProbeJob = viewModelScope.launch {
+            _navFieldProbeRunning.value = true
+            val startWall = System.currentTimeMillis()
+            val startElapsed = SystemClock.elapsedRealtime()
+            val csv = runCatching {
+                val dir = File(context.filesDir, "navfield-probe").apply { mkdirs() }
+                File(dir, "navfield-$startWall.csv").also {
+                    it.appendText("field_hex,sub_hex,value_hex,elapsed_ms,wall_iso,dwell_ms\n")
+                }
+            }.getOrNull()
+            val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", java.util.Locale.US)
+            appendLog("NAV-FIELD PROBE start — steady arrow (0x14, 500m); watch for flash/color change")
+            try {
+                for ((t, s) in fields) {
+                    for (v in values) {
+                        if (!isActive || session == null) break
+                        val label = "%02X %02X = %02X".format(t, s, v)
+                        _navFieldProbeLabel.value = label
+                        // Send a steady nav packet with the one extra field under test.
+                        sess.sendRaw(DashCommands.activeNavPacket(
+                            maneuver = 0x14, primaryDist = 500, primaryUnit = DashCommands.NAV_UNIT_METERS,
+                            totalDist = 5000, totalUnit = DashCommands.NAV_UNIT_METERS,
+                            extraField = Triple(t, s, v),
+                        ))
+                        val elapsed = SystemClock.elapsedRealtime() - startElapsed
+                        val wall = iso.format(java.util.Date())
+                        DebugLog.i(TAG) { "NAVFIELDPROBE field=${hex(t)} sub=${hex(s)} val=${hex(v)} elapsedMs=$elapsed wall=$wall" }
+                        csv?.let { runCatching { it.appendText("${hex(t)},${hex(s)},${hex(v)},$elapsed,$wall,$dwellMs\n") } }
+                        appendLog("NAVFIELD $label — flash change?")
+                        delay(dwellMs)
+                    }
+                }
+                appendLog("NAV-FIELD PROBE done" + (csv?.let { " — saved ${it.name}" } ?: ""))
+            } finally {
+                _navFieldProbeRunning.value = false
+                _navFieldProbeLabel.value = null
+            }
+        }
+    }
+
+    fun stopNavFieldProbe() {
+        navFieldProbeJob?.cancel(); navFieldProbeJob = null
+        _navFieldProbeRunning.value = false
+        _navFieldProbeLabel.value = null
+        appendLog("NAV-FIELD PROBE stopped")
     }
 
     private fun hex(v: Int) = "0x%02X".format(v)

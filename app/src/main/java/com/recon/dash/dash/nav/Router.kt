@@ -25,9 +25,33 @@ sealed class RouterResult {
     data class Failure(val error: RouterError) : RouterResult()
 }
 
+/**
+ * Ride mode — a preset of Valhalla motorcycle-costing values. Valhalla has no named "modes"; it's
+ * one `motorcycle` costing shaped by 0..1 preference knobs. These presets pick sensible bundles:
+ *   use_highways    0=avoid .. 1=prefer   (default 0.5 = neutral)
+ *   use_trails      willingness to use rough/unpaved tracks (motorcycle-specific)
+ *   avoidBadSurfaces 0=allow rough .. 1=strongly avoid unpaved
+ *   shortest        true = minimize distance, ignore time
+ * In every mode the `motorcycle` costing still honors OSM access tags, so it won't route onto a
+ * road tagged motorcycle=no (e.g. a bike-banned expressway) regardless of preset.
+ */
+enum class RideMode(
+    val label: String,
+    val useHighways: Double,
+    val useTrails: Double,
+    val avoidBadSurfaces: Double,
+    val shortest: Boolean,
+) {
+    FASTEST("Fastest", useHighways = 0.9, useTrails = 0.0, avoidBadSurfaces = 0.75, shortest = false),
+    BALANCED("Balanced", useHighways = 0.5, useTrails = 0.0, avoidBadSurfaces = 0.5, shortest = false),
+    AVOID_HIGHWAYS("Avoid highways", useHighways = 0.1, useTrails = 0.0, avoidBadSurfaces = 0.5, shortest = false),
+    EXPLORE("Explore", useHighways = 0.3, useTrails = 0.6, avoidBadSurfaces = 0.1, shortest = false),
+    SHORTEST("Shortest", useHighways = 0.5, useTrails = 0.2, avoidBadSurfaces = 0.25, shortest = true),
+}
+
 data class RouteOptions(
+    val mode: RideMode = RideMode.BALANCED,
     val avoidTolls: Boolean = false,
-    val avoidHighways: Boolean = false,
     val avoidFerries: Boolean = false,
     val alternativeRoutes: Boolean = true,
 )
@@ -46,13 +70,45 @@ class Router(private val context: Context) {
 
     companion object {
         private const val TAG = "Router"
+        // Origin edge-matching tolerance around the rider's heading on reroutes (Valhalla default 60).
+        private const val HEADING_TOLERANCE_DEG = 45
         private const val TILES_DIR_NAME = "valhalla"
-        // Per-state packs extract loose .gph into this dir and stack...
-        private const val TILE_SUBDIR = "valhalla_tiles"
-        // ...then get assembled into this ONE tar, which is what the .so actually routes from
-        // (tile_extract, mmap'd). The loose tile_dir path crashes the mobile .so; a proper tar works.
+        // The ONE pre-assembled all-India tar the .so routes from (tile_extract, mmap'd). The loose
+        // tile_dir path crashes the mobile .so; a proper tar works.
         private const val TILE_EXTRACT_NAME = "valhalla_tiles.tar"
         private const val ROUTE_TIMEOUT_MS = 8_000L
+
+        /** Pure request builder (JVM-testable). */
+        internal fun buildRequest(from: GeoPoint, to: GeoPoint, options: RouteOptions, fromHeading: Float?): String {
+            val root = JSONObject()
+            val locations = org.json.JSONArray()
+            val origin = JSONObject().put("lat", from.lat).put("lon", from.lng)
+            if (fromHeading != null) {
+                // Only match road edges running within ±HEADING_TOLERANCE of the rider's travel direction.
+                origin.put("heading", ((fromHeading.toInt() % 360) + 360) % 360)
+                origin.put("heading_tolerance", HEADING_TOLERANCE_DEG)
+            }
+            locations.put(origin)
+            locations.put(JSONObject().put("lat", to.lat).put("lon", to.lng))
+            root.put("locations", locations)
+            root.put("costing", "motorcycle")
+
+            val costingOptions = JSONObject()
+            val moto = JSONObject()
+            val mode = options.mode
+            moto.put("use_tolls", if (options.avoidTolls) 0.0 else 0.5)
+            moto.put("use_highways", mode.useHighways)
+            moto.put("use_trails", mode.useTrails)
+            moto.put("avoid_bad_surfaces", mode.avoidBadSurfaces)
+            if (mode.shortest) moto.put("shortest", true)
+            moto.put("use_ferry", if (options.avoidFerries) 0.0 else 0.5)
+            costingOptions.put("motorcycle", moto)
+            root.put("costing_options", costingOptions)
+
+            root.put("units", "kilometers")
+            if (options.alternativeRoutes) root.put("alternates", 2)
+            return root.toString()
+        }
     }
 
     private var engine: ValhallaKotlin? = null
@@ -64,11 +120,7 @@ class Router(private val context: Context) {
     val tilesDir: File
         get() = File(context.filesDir, TILES_DIR_NAME)
 
-    /** The shared tile directory packs extract into (filesDir/valhalla/valhalla_tiles). */
-    val tileGraphDir: File
-        get() = File(tilesDir, TILE_SUBDIR)
-
-    /** The assembled routable extract the .so reads (filesDir/valhalla/valhalla_tiles.tar). */
+    /** The all-India routable extract the .so reads (filesDir/valhalla/valhalla_tiles.tar). */
     val tileExtractFile: File
         get() = File(tilesDir, TILE_EXTRACT_NAME)
 
@@ -107,10 +159,17 @@ class Router(private val context: Context) {
         }
     }
 
+    /**
+     * @param fromHeading the rider's travel heading (degrees) at [from], or null when stationary /
+     *                    unknown. Pass it on reroutes: without it Valhalla may snap the origin to
+     *                    the opposite direction of the road and start the new route with a U-turn,
+     *                    which the rider rides away from → off-route again → reroute loop.
+     */
     suspend fun route(
         from: GeoPoint,
         to: GeoPoint,
         options: RouteOptions = RouteOptions(),
+        fromHeading: Float? = null,
     ): RouterResult = withContext(Dispatchers.IO) {
         val eng = engine
         val cfg = configPath
@@ -121,7 +180,7 @@ class Router(private val context: Context) {
         }
 
         try {
-            val requestJson = buildRequest(from, to, options)
+            val requestJson = buildRequest(from, to, options, fromHeading)
             // The native route() call is blocking and cannot be interrupted. We run it in a child
             // coroutine and abandon it via withTimeoutOrNull: the caller is freed after the timeout
             // (no request pile-up), though the orphaned native thread runs to completion in the
@@ -155,26 +214,6 @@ class Router(private val context: Context) {
         engine = null
         configPath = null
         isReady = false
-    }
-
-    private fun buildRequest(from: GeoPoint, to: GeoPoint, options: RouteOptions): String {
-        val root = JSONObject()
-        val locations = org.json.JSONArray()
-        locations.put(JSONObject().put("lat", from.lat).put("lon", from.lng))
-        locations.put(JSONObject().put("lat", to.lat).put("lon", to.lng))
-        root.put("locations", locations)
-        root.put("costing", "motorcycle")
-
-        val costingOptions = JSONObject()
-        val moto = JSONObject()
-        moto.put("use_tolls", if (options.avoidTolls) 0.0 else 0.5)
-        moto.put("use_highways", if (options.avoidHighways) 0.1 else 0.5)
-        costingOptions.put("motorcycle", moto)
-        root.put("costing_options", costingOptions)
-
-        root.put("units", "kilometers")
-        if (options.alternativeRoutes) root.put("alternates", 2)
-        return root.toString()
     }
 
     private fun parseResponse(json: String): List<Route> = ValhallaTripParser.parse(json)
@@ -300,18 +339,18 @@ internal object ValhallaTripParser {
         15 -> ManeuverType.TURN_LEFT                   // kLeft
         16 -> ManeuverType.SLIGHT_LEFT                 // kSlightLeft
         17 -> ManeuverType.CONTINUE                    // kRampStraight
-        18 -> ManeuverType.SLIGHT_RIGHT                // kRampRight
-        19 -> ManeuverType.SLIGHT_LEFT                 // kRampLeft
-        20 -> ManeuverType.SLIGHT_RIGHT                // kExitRight
-        21 -> ManeuverType.SLIGHT_LEFT                 // kExitLeft
+        18 -> ManeuverType.KEEP_RIGHT                  // kRampRight  (fork onto ramp, not a slight turn)
+        19 -> ManeuverType.KEEP_LEFT                   // kRampLeft
+        20 -> ManeuverType.KEEP_RIGHT                  // kExitRight
+        21 -> ManeuverType.KEEP_LEFT                   // kExitLeft
         22 -> ManeuverType.CONTINUE                    // kStayStraight
-        23 -> ManeuverType.SLIGHT_RIGHT                // kStayRight
-        24 -> ManeuverType.SLIGHT_LEFT                 // kStayLeft
+        23 -> ManeuverType.KEEP_RIGHT                  // kStayRight  (bear/keep right)
+        24 -> ManeuverType.KEEP_LEFT                   // kStayLeft   (bear/keep left)
         25 -> ManeuverType.CONTINUE                    // kMerge (straight)
         26, 27 -> ManeuverType.ROUNDABOUT              // kRoundaboutEnter / kRoundaboutExit
         // 28,29 = ferry enter/exit; 30-36 = transit; 39-43 = elevator/steps/escalator/building
-        37 -> ManeuverType.SLIGHT_RIGHT                // kMergeRight
-        38 -> ManeuverType.SLIGHT_LEFT                 // kMergeLeft
+        37 -> ManeuverType.KEEP_RIGHT                  // kMergeRight
+        38 -> ManeuverType.KEEP_LEFT                   // kMergeLeft
         else -> ManeuverType.CONTINUE
     }
 }

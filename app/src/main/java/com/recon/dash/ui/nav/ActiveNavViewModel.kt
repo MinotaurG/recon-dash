@@ -21,6 +21,7 @@ import com.recon.dash.data.RideRecorder
 import com.recon.dash.util.DebugLog
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +46,8 @@ data class NavDisplayState(
     /** Populated once on arrival so the screen can show a route summary instead of going blank. */
     val summary: RideSummary? = null,
     val offRoute: Boolean = false,
+    /** Off-route confirmed and a new route is being computed — the card shows "Rerouting…". */
+    val rerouting: Boolean = false,
     val speedAlertActive: Boolean = false,
     /**
      * True when the OS Battery Saver is ON. On Samsung One UI, Battery Saver throttles screen-off
@@ -68,10 +71,17 @@ class ActiveNavViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "ActiveNavVM"
-        private const val MIN_REROUTE_INTERVAL_MS = 8_000L
+        private const val MIN_REROUTE_INTERVAL_MS = 6_000L
         private const val REROUTE_ACCURACY_GATE_M = 50f
+        private const val MIN_HEADING_SPEED_MPS = 2f  // ~7 km/h; below this GPS bearing is noise
         // If a real GPS fix arrived within this window, ignore NETWORK-provider fixes entirely.
         private const val GPS_FRESH_MS = 10_000L
+        // Cold-start freeze fix: FusedLocationProvider emits coarse ~90m network fixes ~6s apart
+        // while GPS warms (~30s). The old NETWORK gate only fired on the raw path (provider check);
+        // on the fused path every coarse fix moved the marker, freezing it on a wrong spot. Until we
+        // have a fix at least this accurate, DON'T move the map marker — hold the last good position
+        // (or the route origin). Matches Google/OsmAnd (they don't jump the dot to a coarse fix).
+        private const val MARKER_ACCURACY_GATE_M = 35f
     }
 
     private val _navState = MutableStateFlow(NavDisplayState())
@@ -143,6 +153,7 @@ class ActiveNavViewModel @Inject constructor(
         (context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager).isPowerSaveMode
 
     private fun startNavigation() {
+        hasHadReliableMarker = false   // new session: re-arm the cold-start marker gate
         // Keep GPS alive with the screen off for the WHOLE nav, independent of the dash. Previously
         // only the dash held this foreground/wakelock, so a flapping dash link froze GPS mid-ride.
         com.recon.dash.dash.DashKeepAliveService.startFor(
@@ -177,18 +188,18 @@ class ActiveNavViewModel @Inject constructor(
         }
     }
 
-    private suspend fun computeRoute(from: GeoPoint, isReroute: Boolean = false) {
+    private suspend fun computeRoute(from: GeoPoint, isReroute: Boolean = false, heading: Float? = null) {
         val to = GeoPoint(destLat, destLng)
         // Track which engine actually produced the route (was a static "valhalla/osrm" string that
         // told us nothing — so we could never tell from logs whether a ride was offline or online).
         var actualSource = "valhalla"
-        var result = router.route(from, to)
+        var result = router.route(from, to, fromHeading = heading)
         if (result is RouterResult.Failure) {
             val why = (result as RouterResult.Failure).error
             DebugLog.w(TAG) { "Offline (valhalla) route failed, trying OSRM online: $why" }
             com.recon.dash.util.NavLog.route("valhalla_fail", 0.0, 0, reroute = isReroute)
             actualSource = "osrm"
-            result = com.recon.dash.dash.nav.OsrmClient.route(from, to)
+            result = com.recon.dash.dash.nav.OsrmClient.route(from, to, heading)
         }
         when (result) {
             is RouterResult.Success -> {
@@ -198,8 +209,16 @@ class ActiveNavViewModel @Inject constructor(
                 voiceManager?.resetTrip()
                 // Reroute swaps the route (and resets the progress cursor) WITHOUT re-emitting the
                 // "nav started" event; only the initial route starts navigation.
-                if (isReroute) navSessionManager.updateRoute(result.route)
-                else navSessionManager.startNavigation(result.route, destName)
+                if (isReroute) {
+                    navSessionManager.updateRoute(result.route)
+                    // updateRoute() nulls the progress snapshot and the new engine won't emit
+                    // traveled/ahead geometry until the NEXT GPS fix (~1s away). The nav map draws
+                    // those two flows, so without this the whole route line vanishes for that gap —
+                    // the "map goes black during a detour" bug. Seed the map immediately: the entire
+                    // new route is "ahead" (cursor reset to 0), nothing traveled yet.
+                    _aheadGeometry.value = result.route.geometry
+                    _travelledGeometry.value = emptyList()
+                } else navSessionManager.startNavigation(result.route, destName)
                 val r = result.route
                 val firstManeuver = r.maneuvers.firstOrNull { it.type != com.recon.dash.dash.nav.ManeuverType.DEPART }
                 _navState.value = NavDisplayState(
@@ -351,15 +370,21 @@ class ActiveNavViewModel @Inject constructor(
             location.latitude, location.longitude, speed, accuracy, bearing,
         ) ?: return
 
-        // When ON-route, show the snapped point (rides the line). When OFF-route, show the RAW
-        // GPS position + heading so the marker follows the rider away from the stale route
-        // instead of freezing on the old line's nearest point (the "stuck" bug).
-        if (progress.offRoute) {
-            _riderPosition.value = rawPos
-            if (location.hasBearing()) _riderBearing.value = location.bearing
+        // Marker accuracy gate (cold-start freeze fix): a coarse fix (~90m at start) must NOT move
+        // the marker to a wrong spot. If this fix is coarse AND we've already shown a good position,
+        // hold the marker where it is — the engine still consumed the fix above, we just don't
+        // display the bad point. The FIRST marker is allowed even if coarse (better a rough dot than
+        // none); once we've had a good fix, coarse ones are display-suppressed until accuracy recovers.
+        val markerReliable = accuracy <= MARKER_ACCURACY_GATE_M
+        if (markerReliable) hasHadReliableMarker = true
+        val suppressMarker = hasHadReliableMarker && !markerReliable
+        if (suppressMarker) {
+            com.recon.dash.util.NavLog.event("marker_hold", "acc=${accuracy.toInt()} reason=coarse")
         } else {
-            _riderPosition.value = progress.snapped
-            _riderBearing.value = progress.bearing.toFloat()
+            // Marker rides the line while on it and shows the real GPS position as soon as the rider
+            // leaves it (decided by NavEngine with hysteresis) — the old route stays drawn meanwhile.
+            _riderPosition.value = progress.markerPosition
+            _riderBearing.value = progress.markerBearing.toFloat()
         }
         _travelledGeometry.value = progress.traveledGeometry
         _aheadGeometry.value = progress.aheadGeometry
@@ -377,15 +402,20 @@ class ActiveNavViewModel @Inject constructor(
             currentStreet = progress.currentStreet,
             arrived = progress.arrived,
             offRoute = progress.offRoute,
+            rerouting = progress.offRoute || rerouteInFlight,
             speedAlertActive = alertActive,
             batterySaverOn = isBatterySaverOn(),
         )
 
-        voiceManager?.maybeAnnounce(
-            progress.nextManeuver,
-            progress.distanceToManeuverM,
-            progress.remainingMeters,
-        )
+        // Stay quiet about the OLD route's turns while the rider is off it (suspected or
+        // confirmed) — the next instruction they hear should be from the new route.
+        if (!progress.offRoute && !progress.offRouteSuspect) {
+            voiceManager?.maybeAnnounce(
+                progress.nextManeuver,
+                progress.distanceToManeuverM,
+                progress.remainingMeters,
+            )
+        }
 
         if (progress.arrived && !arrivedHandled) {
             // Reached the destination — end navigation once, save the ride, and let the screen
@@ -397,13 +427,16 @@ class ActiveNavViewModel @Inject constructor(
         } else if (progress.offRoute) {
             // Reroute from the RAW GPS position (where the rider actually IS), not the snapped
             // point on the old route (which is where they left it).
-            maybeReroute(rawPos, accuracy)
+            // Pass the travel heading so the new route continues the way the rider is going
+            // (no heading → Valhalla routed U-turns → rider rode away → reroute loop).
+            maybeReroute(rawPos, accuracy, headingForRouting(location))
         }
     }
 
     @Volatile private var arrivedHandled = false
     @Volatile private var lastFixAtMs = 0L    // for logging inter-fix gaps (location-pipeline health)
     @Volatile private var lastGpsFixAtMs = 0L // last real GPS fix; gates out coarse NETWORK fixes
+    @Volatile private var hasHadReliableMarker = false // true once a sub-gate-accuracy fix was shown
 
     // Diagnostic: log screen on/off so the next ride can prove whether the GPS dropouts line up
     // with screen-off (Android suspending location delivery) vs. happening screen-on too (which
@@ -475,7 +508,10 @@ class ActiveNavViewModel @Inject constructor(
     /** Fire a one-off divergence capture for [route] from [from]; swallows all failures. */
     private fun captureDivergence(route: Route, from: GeoPoint, ctx: String) {
         if (!divergenceCapture.enabled) return
-        viewModelScope.launch {
+        // MUST run off the main thread: the route comparison is CPU-heavy (grew to a multi-minute
+        // main-thread ANR on a 1434km route — GeoPoint.projectOnSegment over ~72k×70k points). This
+        // is the debug-only Google comparison; it must never touch the UI thread.
+        viewModelScope.launch(Dispatchers.Default) {
             runCatching {
                 divergenceCapture.capture(route, from, GeoPoint(destLat, destLng), ctx, System.currentTimeMillis())
             }.onFailure { DebugLog.w(TAG) { "Divergence capture ($ctx) threw: ${it.message}" } }
@@ -487,7 +523,7 @@ class ActiveNavViewModel @Inject constructor(
     private fun startDivergenceTicker() {
         if (!divergenceCapture.enabled) return
         divergenceTickJob?.cancel()
-        divergenceTickJob = viewModelScope.launch {
+        divergenceTickJob = viewModelScope.launch(Dispatchers.Default) {
             while (true) {
                 kotlinx.coroutines.delay(com.recon.dash.dash.nav.DivergenceCapture.PERIODIC_INTERVAL_MS)
                 val current = route ?: continue
@@ -503,7 +539,11 @@ class ActiveNavViewModel @Inject constructor(
     @Volatile private var rerouteInFlight = false
     private var lastRerouteAtMs = 0L
 
-    private fun maybeReroute(from: GeoPoint, accuracyM: Float) {
+    /** Travel heading to constrain routing, or null when too slow for GPS bearing to be trustworthy. */
+    private fun headingForRouting(location: Location): Float? =
+        if (location.hasBearing() && location.speed > MIN_HEADING_SPEED_MPS) location.bearing else null
+
+    private fun maybeReroute(from: GeoPoint, accuracyM: Float, heading: Float?) {
         val now = System.currentTimeMillis()
         when {
             rerouteInFlight ->
@@ -515,10 +555,11 @@ class ActiveNavViewModel @Inject constructor(
             else -> {
                 rerouteInFlight = true
                 lastRerouteAtMs = now
-                com.recon.dash.util.NavLog.reroute(fired = true, reason = "offRoute")
+                com.recon.dash.util.NavLog.reroute(fired = true, reason = "offRoute hdg=${heading?.toInt()}")
+                voiceManager?.announceRerouting()
                 viewModelScope.launch {
                     try {
-                        computeRoute(from, isReroute = true)
+                        computeRoute(from, isReroute = true, heading = heading)
                     } finally {
                         rerouteInFlight = false
                     }

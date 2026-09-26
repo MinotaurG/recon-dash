@@ -34,6 +34,11 @@ object RouteComparator {
 
     private const val CORRIDOR_M = 25.0     // within this of Google's line = "same road"
     private const val SAMPLE_SPACING_M = 20.0
+    // Hard cap on comparison cost. overlapFraction is O(samples × referenceSegments); a 1434km
+    // route at 20m spacing is ~72k samples × ~70k segments ≈ 5B ops — that hung even a background
+    // thread for minutes (and ANR'd the UI when it ran on main). Cap samples so long routes widen
+    // their spacing instead; 2000 samples is ample for an overlap percentage.
+    private const val MAX_SAMPLES = 2000
 
     fun compare(valhalla: Route, google: Route): RouteDivergence {
         val overlap = overlapFraction(valhalla.geometry, google.geometry)
@@ -51,11 +56,23 @@ object RouteComparator {
     /** Fraction of [subject] (sampled by arc length) lying within [CORRIDOR_M] of [reference]. */
     private fun overlapFraction(subject: List<GeoPoint>, reference: List<GeoPoint>): Double {
         if (subject.size < 2 || reference.size < 2) return 0.0
-        val samples = sampleByDistance(subject, SAMPLE_SPACING_M)
+        // Widen spacing on long routes so total samples stay under MAX_SAMPLES (bounds the O(N×M)
+        // cost). subjectLen/MAX_SAMPLES is the floor spacing; use the larger of it and the default.
+        var subjectLen = 0.0
+        for (i in 1 until subject.size) subjectLen += GeoPoint.distMeters(subject[i - 1], subject[i])
+        val spacing = maxOf(SAMPLE_SPACING_M, subjectLen / MAX_SAMPLES)
+        val samples = sampleByDistance(subject, spacing)
         if (samples.isEmpty()) return 0.0
+        // Also thin the reference polyline: distToPolyline scans every reference segment per sample,
+        // so an unthinned 70k-segment reference makes it O(samples × 70k). Resample the reference to
+        // a bounded segment count too — CORRIDOR_M (25m) tolerance easily absorbs the coarser line.
+        var refLen = 0.0
+        for (i in 1 until reference.size) refLen += GeoPoint.distMeters(reference[i - 1], reference[i])
+        val refSpacing = maxOf(SAMPLE_SPACING_M, refLen / MAX_SAMPLES)
+        val ref = sampleByDistance(reference, refSpacing)
         var near = 0
         for (s in samples) {
-            if (distToPolyline(s, reference) <= CORRIDOR_M) near++
+            if (distToPolyline(s, ref) <= CORRIDOR_M) near++
         }
         return near.toDouble() / samples.size
     }

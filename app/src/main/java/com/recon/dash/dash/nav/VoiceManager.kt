@@ -105,6 +105,15 @@ class VoiceManager private constructor(context: Context) {
         }
     }
 
+    /** Off-route confirmed and a reroute has started (Google's "Rerouting…" cue). */
+    fun announceRerouting() {
+        when (_mode.value) {
+            VoiceMode.OFF -> Unit
+            VoiceMode.CHIME -> chime()
+            VoiceMode.FULL -> speak("Rerouting")
+        }
+    }
+
     /** Reset trip state when nav starts/stops so the next route announces cleanly. */
     fun resetTrip() { lastManeuverKey = -1.0; farDone = false; nearDone = false; arrived = false }
 
@@ -117,8 +126,10 @@ class VoiceManager private constructor(context: Context) {
     private fun turnPhrase(m: Maneuver): String = when (m.type) {
         ManeuverType.TURN_LEFT    -> "turn left"
         ManeuverType.TURN_RIGHT   -> "turn right"
-        ManeuverType.SLIGHT_LEFT  -> "keep left"
-        ManeuverType.SLIGHT_RIGHT -> "keep right"
+        ManeuverType.SLIGHT_LEFT  -> "slight left"
+        ManeuverType.SLIGHT_RIGHT -> "slight right"
+        ManeuverType.KEEP_LEFT    -> "keep left"
+        ManeuverType.KEEP_RIGHT   -> "keep right"
         ManeuverType.SHARP_LEFT   -> "sharp left"
         ManeuverType.SHARP_RIGHT  -> "sharp right"
         ManeuverType.UTURN        -> "make a U-turn"

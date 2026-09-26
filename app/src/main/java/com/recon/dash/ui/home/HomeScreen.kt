@@ -58,6 +58,8 @@ fun HomeScreen(
     onFavoriteTap: (FavoritePlace) -> Unit,
     onFavoriteSlotTap: (FavoriteSlot) -> Unit,
     onDashTap: () -> Unit,
+    onNavMapTap: () -> Unit = {},
+    onClusterTap: () -> Unit = {},
     onSettingsTap: () -> Unit = {},
     onRidesTap: () -> Unit = {},
     onGarageTap: () -> Unit = {},
@@ -101,6 +103,14 @@ fun HomeScreen(
             color = if (dashConnected) Success else Color(0xFF636366),
             onClick = onDashTap,
         ))
+        // Navigation (4th, right after Dash) — opens the full map + search.
+        add(HomeTile(
+            id = "nav",
+            label = "Navigation",
+            icon = Icons.Rounded.Navigation,
+            color = TileBlue,
+            onClick = onNavMapTap,
+        ))
         // Music (show actual app icon if installed)
         val musicDrawable = getMusicAppIcon(context, musicApp)
         add(HomeTile(
@@ -110,6 +120,14 @@ fun HomeScreen(
             color = musicAppColor(musicApp),
             onClick = { launchMusicApp(context, musicApp) },
             appIconDrawable = musicDrawable,
+        ))
+        // Telemetry (cyberpunk OBD cluster)
+        add(HomeTile(
+            id = "cluster",
+            label = "Telemetry",
+            icon = Icons.Rounded.Speed,
+            color = Color(0xFF00E5FF),
+            onClick = onClusterTap,
         ))
         // Rides
         add(HomeTile(
@@ -409,23 +427,6 @@ private fun CarPlayTile(
     }
 }
 
-private fun slotColor(slot: FavoriteSlot): Color = when (slot) {
-    FavoriteSlot.HOME -> TileBlue
-    FavoriteSlot.OFFICE -> TileGreen
-    FavoriteSlot.CUSTOM_1 -> TileOrange
-    FavoriteSlot.CUSTOM_2 -> TilePink
-    FavoriteSlot.CUSTOM_3 -> TileTeal
-    FavoriteSlot.CUSTOM_4 -> Color(0xFF5E5CE6)
-}
-
-private fun slotIcon(slot: FavoriteSlot): ImageVector = when (slot) {
-    FavoriteSlot.HOME -> Icons.Rounded.Home
-    FavoriteSlot.OFFICE -> Icons.Rounded.Work
-    FavoriteSlot.CUSTOM_1 -> Icons.Rounded.FitnessCenter
-    FavoriteSlot.CUSTOM_2 -> Icons.Rounded.Person
-    FavoriteSlot.CUSTOM_3 -> Icons.Rounded.LocalCafe
-    FavoriteSlot.CUSTOM_4 -> Icons.Rounded.Place
-}
 
 private fun getMusicAppIcon(context: android.content.Context, pkg: String): Drawable? {
     if (pkg.isBlank()) {

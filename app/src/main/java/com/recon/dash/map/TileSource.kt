@@ -29,11 +29,21 @@ class TileSource(context: Context) {
         openPMTiles()
     }
 
+    @Volatile private var rasterizer: VectorTileRasterizer? = null
+
     val hasPMTiles: Boolean get() = reader?.isValid == true
 
+    /** Vector archives need rasterizing (tens of ms per tile) — callers should load them off the render thread. */
+    val isVector: Boolean get() = reader?.isVector == true
+
+    /**
+     * Bitmap for tile (z, x, y). Raster archives decode directly; vector (MVT) archives — the
+     * all-India map — are rasterized, overzooming beyond the archive's max zoom from vector data.
+     */
     fun getTile(z: Int, x: Int, y: Int): Bitmap? {
         val r = reader
         if (r != null && r.isValid) {
+            if (r.isVector) return rasterizer?.render(z, x, y)
             val data = r.getTile(z, x, y) ?: return null
             return BitmapFactory.decodeByteArray(data, 0, data.size)
         }
@@ -70,12 +80,14 @@ class TileSource(context: Context) {
     fun clear() {
         reader?.close()
         reader = null
+        rasterizer = null
         pmtilesDir.listFiles()?.forEach { it.delete() }
     }
 
     fun close() {
         reader?.close()
         reader = null
+        rasterizer = null
     }
 
     private fun openPMTiles() {
@@ -85,6 +97,7 @@ class TileSource(context: Context) {
             val r = PMTilesReader(file)
             if (r.open()) {
                 reader = r
+                rasterizer = if (r.isVector) VectorTileRasterizer(r::getTile, r.maxZoom) else null
                 DebugLog.i(TAG) { "PMTiles source active: ${file.name} (${file.length() / 1024 / 1024}MB)" }
             } else {
                 DebugLog.w(TAG) { "PMTiles file exists but failed to open" }

@@ -25,13 +25,19 @@ data class NavUpdate(
 data class NavProgress(
     val snapped: GeoPoint,
     val bearing: Double,
+    // Where to DRAW the rider (phone + dash): the snapped point while riding the route, the real
+    // GPS position once the rider has left it — so a detour shows immediately, like Google Maps.
+    val markerPosition: GeoPoint,
+    val markerBearing: Double,
     val traveledGeometry: List<GeoPoint>,   // route consumed so far (grey/trimmed)
     val aheadGeometry: List<GeoPoint>,       // route still to ride (blue)
     val distanceToManeuverM: Double,
     val nextManeuver: Maneuver?,
+    val secondManeuver: Maneuver?,   // maneuver after next — dash's small secondary glyph
     val remainingMeters: Double,
     val etaSeconds: Double,
     val offRoute: Boolean,
+    val offRouteSuspect: Boolean,           // off the line but not yet confirmed; old route stays up
     val arrived: Boolean,
     val snapDistanceM: Double,
     val currentStreet: String,
@@ -71,7 +77,12 @@ class NavSessionManager @Inject constructor() {
     // NavEngine (cursor at 0 on the new route) can acquire the rider's position — otherwise the
     // very next fix re-trips off-route and we feedback-loop into a reroute storm.
     @Volatile private var offRouteSuppressedUntilMs = 0L
-    private val graceMs = 6_000L
+    // Short: heading-aware reroutes start on the rider's side of the road, so the new engine
+    // acquires within a fix or two; the time-based off-route confirm is the main storm guard.
+    private val graceMs = 3_000L
+
+    // Last marker bearing, held when the rider is off the line but too slow for a GPS bearing.
+    private var lastMarkerBearing = 0.0
 
     fun startNavigation(route: Route, destination: String) {
         _activeRoute.value = route
@@ -103,16 +114,26 @@ class NavSessionManager @Inject constructor() {
         val (traveled, ahead) = eng.split(p)
         // Honor the post-reroute grace window: don't surface off-route while the new route settles.
         val offRoute = p.offRoute && System.currentTimeMillis() >= offRouteSuppressedUntilMs
+        val markerBearing = when {
+            p.puckOnRoute -> p.routeBearing
+            bearingDeg != null && speedMps > 2f -> bearingDeg.toDouble()
+            else -> lastMarkerBearing
+        }
+        lastMarkerBearing = markerBearing
         val snapshot = NavProgress(
             snapped = p.snapped,
             bearing = p.routeBearing,
+            markerPosition = if (p.puckOnRoute) p.snapped else GeoPoint(lat, lng),
+            markerBearing = markerBearing,
             traveledGeometry = traveled,
             aheadGeometry = ahead,
             distanceToManeuverM = p.distanceToManeuverM,
             nextManeuver = p.nextManeuver,
+            secondManeuver = p.secondManeuver,
             remainingMeters = p.remainingMeters,
             etaSeconds = p.etaSeconds,
             offRoute = offRoute,
+            offRouteSuspect = p.offRouteSuspect || (p.offRoute && !offRoute),
             arrived = p.arrived,
             snapDistanceM = p.snapDistanceM,
             currentStreet = p.currentStreet,
@@ -123,6 +144,10 @@ class NavSessionManager @Inject constructor() {
             cumM = p.traveledMeters, remM = p.remainingMeters, dManM = p.distanceToManeuverM,
             maneuver = p.nextManeuver?.instruction, offRoute = offRoute,
             arrived = p.arrived, speedMps = speedMps,
+            // Glyph ground-truth: the exact byte + type the dash was sent this fix.
+            maneuverType = p.nextManeuver?.type?.name,
+            glyphCode = p.nextManeuver?.dashCode,
+            exitCount = p.nextManeuver?.roundaboutExitCount,
         )
         return snapshot
     }

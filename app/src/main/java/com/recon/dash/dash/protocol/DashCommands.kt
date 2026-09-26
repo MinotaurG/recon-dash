@@ -162,6 +162,7 @@ object DashCommands {
         title: String,
         projectionOn: Boolean = false,
         maneuver: Int? = null,
+        secondaryManeuver: Int? = null,  // 05 03 small "then" glyph; template default 0x34
         primaryUnit: Int? = null,
         totalDist: Int? = null,
         totalUnit: Int? = null,
@@ -196,6 +197,9 @@ object DashCommands {
         }
         patch1(0x06, 0x05, if (projectionOn) 0x55 else 0xAA)
         maneuver?.let { patch1(0x05, 0x02, it) }
+        // 05 03 = the small secondary "then" glyph. The template hardcodes 0x34; patch it to the
+        // real maneuver-after-next, or 0x00 to hide it when there's no following maneuver.
+        patch1(0x05, 0x03, secondaryManeuver ?: 0x00)
         primaryUnit?.let { patch1(0x05, 0x06, it) }
         // The template carries the captured French ride's figures (total 0x004F =
         // "7.9 km", secondary 0x000A). Zero them by DEFAULT so a card sent with no live
@@ -230,16 +234,23 @@ object DashCommands {
      */
     fun activeNavPacket(
         maneuver: Int = NAV_MANEUVER_CONTINUE,
+        secondaryManeuver: Int? = null,
         primaryDist: Int = 500,
         primaryUnit: Int = NAV_UNIT_METERS,
         totalDist: Int = 500,
         totalUnit: Int = NAV_UNIT_METERS,
         projectionOn: Boolean = true,
+        // PROBE ONLY: an extra TLV (type,sub,1-byte value) appended to the nav packet, to test
+        // whether an unmapped field (05 0C / 05 07 / 05 54 …) controls the turn-arrow COLOR/FLASH.
+        // Null in normal use. See DashViewModel.startNavFieldProbe.
+        extraField: Triple<Int, Int, Int>? = null,
     ): ByteArray {
         fun u16(v: Int) = "%04X".format(v and 0xFFFF)
         fun u8(v: Int) = "%02X".format(v and 0xFF)
         val tlvs = StringBuilder()
         tlvs.append("05020001").append(u8(maneuver))      // primary maneuver
+        // 05 03 = small secondary "then" glyph. 0x00 hides it when there's no following maneuver.
+        tlvs.append("05030001").append(u8(secondaryManeuver ?: 0x00))
         tlvs.append("05040002").append(u16(primaryDist))  // primary distance
         tlvs.append("05060001").append(u8(primaryUnit))   // primary unit
         tlvs.append("05090002").append(u16(totalDist))    // total distance
@@ -247,8 +258,12 @@ object DashCommands {
         tlvs.append("050A000155")                          // decimal separator = '.'
         tlvs.append("06050001").append(if (projectionOn) "55" else "AA") // projection flag
         tlvs.append("060D0001AA")                          // decimal format off
+        var extra = 0
+        extraField?.let { (t, s, v) ->
+            tlvs.append(u8(t)).append(u8(s)).append("0001").append(u8(v)); extra = 1
+        }
 
-        val segCount = 8 + 1
+        val segCount = 9 + 1 + extra
         val innerHex = "%04X".format(segCount) + NAV_HDR + tlvs.toString()
         val innerBytes = innerHex.length / 2
         val outerLen = innerBytes + 2
@@ -283,6 +298,15 @@ object DashCommands {
     /** Clears a previously repeated 05 22 call card. */
     fun callClear(): ByteArray =
         K1GPacket.build(K1GPacket.tlv(0x05, 0x22, byteArrayOf(0x00)))
+
+    /**
+     * SCREEN-FOCUS PROBE (unverified). Candidate "switch the dash carousel to screen N" command.
+     * A first sweep proved 06 80 <byte> does NOT switch screens, so this now sweeps the whole
+     * 06-command family: send 06 <sub> <value>. The probe (DashViewModel) walks sub-codes we don't
+     * already use, watching which makes the dash jump to Nav/Phone/Media. Purely additive.
+     */
+    fun screenFocusProbe(sub: Int, value: Int): ByteArray =
+        K1GPacket.build(K1GPacket.tlv(0x06, sub and 0xFF, value and 0xFF))
 
     private fun indexOf(haystack: ByteArray, needle: ByteArray, fromEnd: Boolean = false): Int {
         val range = if (fromEnd) (haystack.size - needle.size downTo 0) else (0..haystack.size - needle.size)

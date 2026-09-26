@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Recon Dash launcher mark: a gold navigation chevron (heading-up arrow) inside a thin gold
+     ring — the round Tripper dash + the rider arrow. Drawn inside the 66dp adaptive-icon safe
+     zone of the 108dp canvas so no launcher mask clips it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Ring (the round dash) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D4A55A"
+        android:strokeWidth="3"
+        android:pathData="M54,25 A29,29 0 1,1 53.99,25 Z" />
+    <!-- Navigation chevron -->
+    <path
+        android:fillColor="#D4A55A"
+        android:pathData="M54,33 L70,73 L54,64 L38,73 Z" />
+    <!-- Inner notch highlight for depth -->
+    <path
+        android:fillColor="#F0CB84"
+        android:pathData="M54,33 L54,64 L38,73 Z" />
+</vector>

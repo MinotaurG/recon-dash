@@ -36,7 +36,7 @@ sealed class RoutePreviewState {
         val maneuvers: List<String>,
         val alternatives: List<RouteChoice> = emptyList(),
         val avoidTolls: Boolean = false,
-        val avoidHighways: Boolean = false,
+        val mode: com.recon.dash.dash.nav.RideMode = com.recon.dash.dash.nav.RideMode.BALANCED,
         val isOnlineRoute: Boolean = false,
         /** The bundle to offer for offline download for this route's origin, if any + not installed. */
         val downloadableRegionName: String? = null,
@@ -77,7 +77,7 @@ class RoutePreviewViewModel @Inject constructor(
     private var allRoutes: List<Route> = emptyList()
     private var selectedIndex = 0
     private var avoidTolls = false
-    private var avoidHighways = false
+    private var mode = com.recon.dash.dash.nav.RideMode.BALANCED
     private var usedOnlineRouting = false
 
     init {
@@ -100,8 +100,9 @@ class RoutePreviewViewModel @Inject constructor(
         calculateRoute()
     }
 
-    fun toggleAvoidHighways() {
-        avoidHighways = !avoidHighways
+    fun setMode(newMode: com.recon.dash.dash.nav.RideMode) {
+        if (newMode == mode) return
+        mode = newMode
         calculateRoute()
     }
 
@@ -123,7 +124,7 @@ class RoutePreviewViewModel @Inject constructor(
                 usedOnlineRouting = false
                 result = router.route(
                     from, to,
-                    RouteOptions(avoidTolls = avoidTolls, avoidHighways = avoidHighways, alternativeRoutes = true),
+                    RouteOptions(mode = mode, avoidTolls = avoidTolls, alternativeRoutes = true),
                 )
             }
             if (result is RouterResult.Failure) {
@@ -140,15 +141,15 @@ class RoutePreviewViewModel @Inject constructor(
                 }
                 is RouterResult.Failure -> {
                     allRoutes = emptyList()
-                    // Both offline AND online failed. If the origin is in a state we don't have
-                    // installed, offer to download that state pack (the durable offline fix).
-                    val pack = regionManager.packForLocation(originLat, originLng)
-                    if (pack != null && !regionManager.isPackInstalled(pack.id)) {
+                    // Both offline AND online failed. If the origin is in India but the India routing
+                    // extract isn't installed, offer to download it (the durable offline fix).
+                    if (regionManager.isInIndia(originLat, originLng) && !regionManager.isRoutingInstalled()) {
                         _state.value = RoutePreviewState.RegionMissing(
-                            regionId = pack.id,
-                            regionName = pack.name,
-                            sizeMb = pack.sizeMb,
-                            available = true,   // manifest-listed packs are always downloadable
+                            regionId = "india",
+                            regionName = "India",
+                            sizeMb = regionManager.manifest()?.routing?.sizeMb
+                                ?: com.recon.dash.data.RegionManager.INDIA_ROUTING_SIZE_MB,
+                            available = true,
                         )
                     } else {
                         val msg = when (val err = result.error) {
@@ -191,11 +192,11 @@ class RoutePreviewViewModel @Inject constructor(
                 )
             },
             avoidTolls = avoidTolls,
-            avoidHighways = avoidHighways,
+            mode = mode,
             isOnlineRoute = usedOnlineRouting,
-            // Offer the offline download when this origin's state pack isn't installed — i.e.
-            // you're navigating a state you don't have offline. "You could have this offline."
-            downloadableRegionName = regionManager.uninstalledPackNameForLocation(originLat, originLng),
+            // Offer the offline download when routing isn't installed but this route is in India —
+            // "you could have this offline."
+            downloadableRegionName = if (regionManager.isInIndia(originLat, originLng) && !regionManager.isRoutingInstalled()) "India" else null,
         )
     }
 

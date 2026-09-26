@@ -22,10 +22,18 @@ object NavLog {
         lat: Double, lng: Double, accM: Float, snapM: Double, cumM: Double,
         remM: Double, dManM: Double, maneuver: String?, offRoute: Boolean,
         arrived: Boolean, speedMps: Float,
+        // Ground-truth for glyph verification: the maneuver TYPE and the exact glyph BYTE the dash
+        // was sent this fix. Lets a ride log be checked directly against the SPEC.md code->glyph map
+        // (previously NAVFIX had only the instruction text, so wrong glyphs had to be inferred).
+        maneuverType: String? = null, glyphCode: Int? = null, exitCount: Int? = null,
     ): String = "NAVFIX " + kv(
         "lat" to fmt6(lat), "lng" to fmt6(lng), "acc" to fmt0(accM.toDouble()),
         "snap" to fmt0(snapM), "cum" to fmt0(cumM), "rem" to fmt0(remM),
-        "dman" to fmt0(dManM), "man" to (maneuver ?: "-"),
+        "dman" to fmt0(dManM),
+        "mtype" to (maneuverType ?: "-"),
+        "glyph" to (glyphCode?.let { "0x%02X".format(it) } ?: "-"),
+        "exit" to (exitCount?.toString() ?: "-"),
+        "man" to (maneuver ?: "-"),
         "off" to offRoute.toString(), "arr" to arrived.toString(),
         "v" to fmt1(speedMps.toDouble()),
     )
@@ -67,8 +75,10 @@ object NavLog {
         lat: Double, lng: Double, accM: Float, snapM: Double, cumM: Double,
         remM: Double, dManM: Double, maneuver: String?, offRoute: Boolean,
         arrived: Boolean, speedMps: Float,
+        maneuverType: String? = null, glyphCode: Int? = null, exitCount: Int? = null,
     ) = DebugLog.d(TAG) {
-        fixLine(lat, lng, accM, snapM, cumM, remM, dManM, maneuver, offRoute, arrived, speedMps)
+        fixLine(lat, lng, accM, snapM, cumM, remM, dManM, maneuver, offRoute, arrived, speedMps,
+            maneuverType, glyphCode, exitCount)
     }
 
     fun route(source: String, meters: Double, maneuvers: Int, reroute: Boolean) =

@@ -44,6 +44,27 @@ class RouteComparatorTest {
     }
 
     @Test
+    fun `long cross-country route compares fast and stays bounded`() {
+        // Regression for the 1434km Mumbai->Delhi ANR: a dense long polyline (20k pts) must NOT
+        // blow up to billions of ops. With sample caps the compare completes in well under a second.
+        fun longRoute(latShift: Double): Route {
+            val pts = ArrayList<GeoPoint>(20_000)
+            var lat = 19.07; var lng = 72.87
+            repeat(20_000) { pts.add(GeoPoint(lat + latShift, lng)); lat += 0.0005; lng += 0.0002 }
+            val cum = DoubleArray(pts.size)
+            for (i in 1 until pts.size) cum[i] = cum[i - 1] + GeoPoint.distMeters(pts[i - 1], pts[i])
+            return Route(pts, emptyList(), cum.last(), cum.last() / 11.0, cum)
+        }
+        val v = longRoute(0.0)
+        val g = longRoute(0.00002)  // near-identical line
+        val t0 = System.nanoTime()
+        val d = RouteComparator.compare(v, g)
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        assertTrue("compare must be bounded (<1500ms), took ${ms}ms", ms < 1500)
+        assertTrue("near-identical long routes should overlap high, got ${d.overlapPct}", d.overlapPct > 0.8)
+    }
+
+    @Test
     fun `delta distance and duration are valhalla minus google`() {
         val v = routeOf(GeoPoint(17.40, 78.32), GeoPoint(17.40, 78.40))  // longer
         val g = routeOf(GeoPoint(17.40, 78.32), GeoPoint(17.40, 78.36))  // shorter

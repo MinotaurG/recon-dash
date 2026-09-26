@@ -1,10 +1,8 @@
 package com.recon.dash.ui.settings
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -14,7 +12,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -27,8 +24,6 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.recon.dash.data.DownloadState
-import com.recon.dash.data.RoutingPack
-import com.recon.dash.data.RoutingZone
 import com.recon.dash.ui.theme.DarkBackground
 import com.recon.dash.ui.theme.DarkSurface
 import com.recon.dash.ui.theme.GoldAccent
@@ -41,15 +36,13 @@ fun RegionDownloadScreen(
     viewModel: RegionDownloadViewModel = hiltViewModel(),
 ) {
     val downloadState by viewModel.downloadState.collectAsStateWithLifecycle()
-    val manifest by viewModel.manifest.collectAsStateWithLifecycle()
-    val installedPacks by viewModel.installedPacks.collectAsStateWithLifecycle()
     val installedSizeMb by viewModel.installedSizeMb.collectAsStateWithLifecycle()
-    val suggestedStateId by viewModel.suggestedStateId.collectAsStateWithLifecycle()
+    val routingInstalled by viewModel.routingInstalled.collectAsStateWithLifecycle()
+    val routingUpdateAvailable by viewModel.routingUpdateAvailable.collectAsStateWithLifecycle()
     val indiaMapInstalled by viewModel.indiaMapInstalled.collectAsStateWithLifecycle()
     val mapUpdateAvailable by viewModel.mapUpdateAvailable.collectAsStateWithLifecycle()
 
     val busy = downloadState is DownloadState.Downloading
-    val expanded = remember { mutableStateMapOf<String, Boolean>() }
 
     Column(
         modifier = Modifier
@@ -73,7 +66,7 @@ fun RegionDownloadScreen(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            "Base map + the states you ride. Downloaded states stack, so cross-state routes work offline.",
+            "Download India once — the map you see and the routing behind it. Both work fully offline, anywhere in the country.",
             color = OnSurface.copy(alpha = 0.4f), fontSize = 12.sp,
         )
         Spacer(Modifier.height(16.dp))
@@ -86,89 +79,46 @@ fun RegionDownloadScreen(
             else -> {}
         }
 
-        // Total installed + delete-all
+        // Total installed
         if (installedSizeMb > 0) {
-            var showDeleteConfirm by remember { mutableStateOf(false) }
             Row(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
                     .background(DarkSurface).padding(16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(fmtSize(installedSizeMb) + " on device", color = Color(0xFF10B981), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                Text("Delete routing", color = Color(0xFFEF4444), fontSize = 13.sp,
-                    modifier = Modifier.clickable { showDeleteConfirm = true })
             }
             Spacer(Modifier.height(16.dp))
-            if (showDeleteConfirm) AlertDialog(
-                onDismissRequest = { showDeleteConfirm = false },
-                title = { Text("Delete all routing packs?") },
-                text = { Text("Removes every downloaded state's routing data. The India map stays. You can re-download anytime.") },
-                confirmButton = { TextButton(onClick = { viewModel.clearGraph(); showDeleteConfirm = false }) { Text("Delete", color = Color(0xFFEF4444)) } },
-                dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") } },
-            )
         }
 
-        // India base map (display)
-        SectionLabel("Base map (display)")
-        IndiaMapCard(indiaMapInstalled, mapUpdateAvailable, viewModel.indiaMapSizeMb, busy,
-            onDownload = { viewModel.downloadIndiaMap() }, onDelete = { viewModel.clearIndiaMap() })
+        // India map (display)
+        SectionLabel("Map (what you see)")
+        AssetCard(
+            title = "India map",
+            subtitle = "~${fmtSize(viewModel.indiaMapSizeMb)} · shown on the dash everywhere",
+            installed = indiaMapInstalled,
+            updateAvailable = mapUpdateAvailable,
+            busy = busy,
+            deleteTitle = "Delete India map?",
+            deleteBody = "Removes the ~2 GB base map. The dash map falls back to online tiles until you re-download.",
+            onDownload = { viewModel.downloadIndiaMap() },
+            onDelete = { viewModel.clearIndiaMap() },
+        )
         Spacer(Modifier.height(20.dp))
 
-        // Routing packs
-        SectionLabel("Routing")
-        val m = manifest
-        if (m == null) {
-            Text("Loading regions…", color = OnSurface.copy(alpha = 0.4f), fontSize = 13.sp,
-                modifier = Modifier.padding(vertical = 12.dp))
-        } else {
-            // Download All India
-            val allInstalled = m.allStates.all { installedPacks.contains(it.id) } && installedPacks.contains("base")
-            Row(
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                    .background(GoldAccent.copy(alpha = 0.10f))
-                    .border(1.dp, GoldAccent.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Download all India", color = OnSurface, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text("~${fmtSize(m.totalMb)} · every state, route anywhere offline",
-                        color = OnSurface.copy(alpha = 0.4f), fontSize = 12.sp)
-                }
-                when {
-                    allInstalled -> Text("Installed", color = Color(0xFF10B981), fontSize = 12.sp)
-                    busy -> Text("…", color = OnSurface.copy(alpha = 0.4f), fontSize = 13.sp)
-                    else -> TextButton(onClick = { viewModel.downloadAll() }) { Text("Download", color = GoldAccent, fontSize = 13.sp) }
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-
-            // Zones (expandable) -> states
-            m.zones.forEach { zone ->
-                val hasSuggested = zone.states.any { it.id == suggestedStateId }
-                val isOpen = expanded[zone.id] ?: hasSuggested
-                ZoneHeader(
-                    zone = zone,
-                    open = isOpen,
-                    allInstalled = zone.states.all { installedPacks.contains(it.id) },
-                    busy = busy,
-                    onToggle = { expanded[zone.id] = !isOpen },
-                    onDownloadZone = { viewModel.downloadZone(zone) },
-                )
-                if (isOpen) {
-                    zone.states.forEach { pack ->
-                        StatePackRow(
-                            pack = pack,
-                            installed = installedPacks.contains(pack.id),
-                            suggested = pack.id == suggestedStateId,
-                            busy = busy,
-                            onDownload = { viewModel.downloadPack(pack) },
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-        }
+        // India routing
+        SectionLabel("Routing (how routes are found)")
+        AssetCard(
+            title = "India routing",
+            subtitle = "~${fmtSize(viewModel.routingSizeMb)} · route anywhere in India offline",
+            installed = routingInstalled,
+            updateAvailable = routingUpdateAvailable,
+            busy = busy,
+            deleteTitle = "Delete India routing?",
+            deleteBody = "Removes the ~4 GB routing data. Navigation falls back to online routing until you re-download.",
+            onDownload = { viewModel.downloadIndiaRouting() },
+            onDelete = { viewModel.clearRouting() },
+        )
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -181,8 +131,19 @@ fun RegionDownloadScreen(
 private fun fmtSize(mb: Int): String =
     if (mb >= 1024) "%.1f GB".format(mb / 1024f) else "$mb MB"
 
+/** A single downloadable asset (map or routing) with download / update / delete affordances. */
 @Composable
-private fun IndiaMapCard(installed: Boolean, updateAvailable: Boolean, sizeMb: Int, busy: Boolean, onDownload: () -> Unit, onDelete: () -> Unit) {
+private fun AssetCard(
+    title: String,
+    subtitle: String,
+    installed: Boolean,
+    updateAvailable: Boolean,
+    busy: Boolean,
+    deleteTitle: String,
+    deleteBody: String,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+) {
     var confirm by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(DarkSurface)
@@ -191,68 +152,25 @@ private fun IndiaMapCard(installed: Boolean, updateAvailable: Boolean, sizeMb: I
     ) {
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("India map", color = OnSurface, fontSize = 14.sp)
+                Text(title, color = OnSurface, fontSize = 14.sp)
                 if (updateAvailable) Text("Update available", color = GoldAccent, fontSize = 10.sp)
             }
-            Text("~${fmtSize(sizeMb)} · shown on the dash everywhere", color = OnSurface.copy(alpha = 0.4f), fontSize = 12.sp)
+            Text(subtitle, color = OnSurface.copy(alpha = 0.4f), fontSize = 12.sp)
         }
         when {
-            updateAvailable && !busy -> TextButton(onClick = onDownload) { Text("Update", color = GoldAccent, fontSize = 13.sp) }
-            installed -> Text("Delete", color = Color(0xFFEF4444), fontSize = 13.sp, modifier = Modifier.clickable { confirm = true })
             busy -> Text("…", color = OnSurface.copy(alpha = 0.4f), fontSize = 13.sp)
+            updateAvailable -> TextButton(onClick = onDownload) { Text("Update", color = GoldAccent, fontSize = 13.sp) }
+            installed -> Text("Delete", color = Color(0xFFEF4444), fontSize = 13.sp, modifier = Modifier.clickable { confirm = true })
             else -> TextButton(onClick = onDownload) { Text("Download", color = GoldAccent, fontSize = 13.sp) }
         }
     }
     if (confirm) AlertDialog(
         onDismissRequest = { confirm = false },
-        title = { Text("Delete India map?") },
-        text = { Text("Removes the ~2 GB base map. The dash map falls back to online tiles until you re-download.") },
+        title = { Text(deleteTitle) },
+        text = { Text(deleteBody) },
         confirmButton = { TextButton(onClick = { onDelete(); confirm = false }) { Text("Delete", color = Color(0xFFEF4444)) } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
     )
-}
-
-@Composable
-private fun ZoneHeader(zone: RoutingZone, open: Boolean, allInstalled: Boolean, busy: Boolean, onToggle: () -> Unit, onDownloadZone: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(DarkSurface)
-            .clickable { onToggle() }.padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text("${if (open) "▾" else "▸"}  ${zone.name}", color = OnSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            Text("${zone.states.size} states · ${fmtSize(zone.sizeMb)}", color = OnSurface.copy(alpha = 0.4f), fontSize = 12.sp)
-        }
-        when {
-            allInstalled -> Text("Installed", color = Color(0xFF10B981), fontSize = 12.sp)
-            busy -> {}
-            else -> TextButton(onClick = onDownloadZone) { Text("Download all", color = GoldAccent, fontSize = 13.sp) }
-        }
-    }
-}
-
-@Composable
-private fun StatePackRow(pack: RoutingPack, installed: Boolean, suggested: Boolean, busy: Boolean, onDownload: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 6.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (suggested) GoldAccent.copy(alpha = 0.08f) else DarkSurface.copy(alpha = 0.5f))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(pack.name, color = OnSurface, fontSize = 13.sp, fontWeight = if (suggested) FontWeight.SemiBold else FontWeight.Normal)
-                if (suggested) Text("You're here", color = GoldAccent, fontSize = 10.sp)
-            }
-            Text(fmtSize(pack.sizeMb), color = OnSurface.copy(alpha = 0.4f), fontSize = 11.sp)
-        }
-        when {
-            installed -> Text("✓", color = Color(0xFF10B981), fontSize = 14.sp)
-            busy -> {}
-            else -> TextButton(onClick = onDownload) { Text("Get", color = GoldAccent, fontSize = 13.sp) }
-        }
-    }
 }
 
 @Composable

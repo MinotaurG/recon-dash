@@ -24,6 +24,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.recon.dash.data.CUSTOM_SLOTS
 import com.recon.dash.data.FavoriteSlot
+import com.recon.dash.data.presetName
 import com.recon.dash.ui.theme.DarkBackground
 import com.recon.dash.ui.theme.DarkSurface
 import com.recon.dash.ui.theme.GoldAccent
@@ -205,13 +206,7 @@ fun SettingsScreen(
     }
 }
 
-private fun slotLabel(slot: FavoriteSlot): String = when (slot) {
-    FavoriteSlot.CUSTOM_1 -> "Place 1"
-    FavoriteSlot.CUSTOM_2 -> "Place 2"
-    FavoriteSlot.CUSTOM_3 -> "Place 3"
-    FavoriteSlot.CUSTOM_4 -> "Place 4"
-    else -> "Place"
-}
+private fun slotLabel(slot: FavoriteSlot): String = slot.presetName()
 
 @Composable
 private fun SettingsToggleRow(

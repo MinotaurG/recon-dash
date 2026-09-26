@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.recon.dash.data.FavoriteSlot
+import com.recon.dash.data.presetName
 import com.recon.dash.search.SearchResult
 import com.recon.dash.ui.theme.*
 
@@ -252,11 +253,4 @@ private fun ResultRow(result: SearchResult, saveMode: Boolean, recent: Boolean =
     }
 }
 
-private fun slotLabel(slot: FavoriteSlot): String = when (slot) {
-    FavoriteSlot.HOME -> "Home"
-    FavoriteSlot.OFFICE -> "Office"
-    FavoriteSlot.CUSTOM_1 -> "Place 1"
-    FavoriteSlot.CUSTOM_2 -> "Place 2"
-    FavoriteSlot.CUSTOM_3 -> "Place 3"
-    FavoriteSlot.CUSTOM_4 -> "Place 4"
-}
+private fun slotLabel(slot: FavoriteSlot): String = slot.presetName()

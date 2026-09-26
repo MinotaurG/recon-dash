@@ -85,7 +85,7 @@ fun SavedPlacesScreen(
                 PlaceTile(
                     label = place.name,
                     subtitle = place.label,
-                    icon = slotIcon(slot),
+                    icon = com.recon.dash.data.PlaceIcons.forPlace(place),
                     color = slotColor(slot),
                     onClick = { onPlaceTap(place) },
                 )
@@ -189,17 +189,10 @@ private fun AddPlaceTile(onClick: () -> Unit) {
 }
 
 private fun slotColor(slot: FavoriteSlot): Color = when (slot) {
-    FavoriteSlot.CUSTOM_1 -> TileOrange
-    FavoriteSlot.CUSTOM_2 -> TilePink
-    FavoriteSlot.CUSTOM_3 -> TileTeal
-    FavoriteSlot.CUSTOM_4 -> Color(0xFF5E5CE6)
+    FavoriteSlot.GYM -> TileOrange
+    FavoriteSlot.FRIEND_1 -> TilePink
+    FavoriteSlot.FRIEND_2 -> TileTeal
+    FavoriteSlot.FUEL -> Color(0xFF5E5CE6)
+    FavoriteSlot.FOOD -> TileGreen
     else -> TileBlue
-}
-
-private fun slotIcon(slot: FavoriteSlot): ImageVector = when (slot) {
-    FavoriteSlot.CUSTOM_1 -> Icons.Rounded.FitnessCenter
-    FavoriteSlot.CUSTOM_2 -> Icons.Rounded.Person
-    FavoriteSlot.CUSTOM_3 -> Icons.Rounded.LocalCafe
-    FavoriteSlot.CUSTOM_4 -> Icons.Rounded.Place
-    else -> Icons.Rounded.Place
 }

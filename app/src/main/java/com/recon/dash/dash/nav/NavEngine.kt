@@ -10,8 +10,13 @@ import kotlin.math.max
  * Reliability design (vs. the old stateless global-nearest-point matcher):
  *  - Monotonic progress cursor + bounded forward search window, so it can't mis-snap onto a
  *    parallel carriageway or an earlier pass on a loop/out-and-back route.
- *  - Off-route requires N consecutive off fixes (hysteresis) AND an accuracy gate, so a single
- *    noisy fix (or a coarse NETWORK-provider fix) never triggers a spurious reroute.
+ *  - Off-route is TIME-based (Google-style): the rider must look off-route continuously for
+ *    [OFF_ROUTE_CONFIRM_MS] (and at least [OFF_ROUTE_MIN_FIXES] fixes) with a reliable fix. While
+ *    merely suspected ([Progress.offRouteSuspect]) the old route stays up; rejoining clears it
+ *    silently. Counting time, not fixes, keeps detection latency stable when the fix rate drops.
+ *  - Exposes [Progress.puckOnRoute]: whether the rider marker should ride the route line or show
+ *    the real GPS position. The marker leaves the line as soon as the rider clearly isn't on it —
+ *    long before off-route is confirmed — so a detour is visible immediately (no "stuck dot").
  *  - Arrival requires true proximity to the destination point, not merely remaining≈0.
  *  - Exposes the snapped point + a traveled/ahead split so the map can trim the line behind
  *    the rider (all consumers share this one computation via NavSessionManager).
@@ -19,7 +24,10 @@ import kotlin.math.max
  * All distances are on the route's haversine polyline axis ([Route.cumulative]) — the SAME axis
  * [Maneuver.cumulativeMeters] is placed on, so distance-to-turn is correct.
  */
-class NavEngine(private val route: Route) {
+class NavEngine(
+    private val route: Route,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
 
     data class Progress(
         val snapped: GeoPoint,            // GPS snapped onto the route
@@ -29,8 +37,11 @@ class NavEngine(private val route: Route) {
         val remainingMeters: Double,
         val distanceToManeuverM: Double,
         val nextManeuver: Maneuver?,
+        val secondManeuver: Maneuver?,   // the maneuver AFTER next — drives the dash's small secondary glyph
         val etaSeconds: Double,
         val offRoute: Boolean,
+        val offRouteSuspect: Boolean,     // looks off-route but not yet confirmed (keep old route up)
+        val puckOnRoute: Boolean,         // true → draw marker at [snapped]; false → at raw GPS
         val arrived: Boolean,
         val snapDistanceM: Double,        // perpendicular distance GPS→route (for logging/UI)
         val currentStreet: String,        // name of the road the rider is currently on ("" if unknown)
@@ -46,8 +57,21 @@ class NavEngine(private val route: Route) {
         private const val OFF_ROUTE_M_SLOW = 50.0     // <30 km/h (city, roundabouts)
         private const val OFF_ROUTE_M_URBAN = 70.0    // 30-60 km/h
         private const val OFF_ROUTE_M_HIGHWAY = 90.0  // >60 km/h
-        private const val OFF_ROUTE_CONSECUTIVE = 5   // consecutive off fixes before declaring off-route
+        private const val OFF_ROUTE_CONFIRM_MS = 4_000L // continuously off this long → off-route
+        private const val OFF_ROUTE_MIN_FIXES = 3       // …and at least this many off fixes (no confirm across a GPS gap)
+        // Marker (puck) snapping, with hysteresis so it doesn't flicker between line and raw GPS.
+        private const val PUCK_LEAVE_M = 20.0         // leave the line beyond this (or the fix accuracy, capped)
+        private const val PUCK_RETURN_M = 12.0        // rejoin the line within this
         private const val ACCURACY_GATE_M = 40.0      // fixes worse than this don't vote off-route
+        // A stationary/crawling vehicle CANNOT have left the route, and GPS scatter is worst at rest
+        // (dead-reckoning loses its velocity anchor). Below this speed we never vote off-route — this
+        // is why apps freeze the marker at traffic lights. (Verified: a HITEC-City reroute fired at
+        // v≈0 on a 128m urban-canyon drift while the rider sat on the correct road.)
+        private const val OFF_ROUTE_MIN_SPEED_MPS = 1.5   // ~5.4 km/h
+        // Reported GPS accuracy is over-confident right after a big spike (acc 344m→25m in 1s while
+        // still 128m off). Require this many CONSECUTIVE good-accuracy fixes before trusting the
+        // value enough to vote off-route — so a just-recovered accuracy can't trigger a reroute.
+        private const val ACCURACY_SETTLE_FIXES = 3
         // Heading gate: only count as off-route if the rider's heading also DISAGREES with the
         // route direction. On a roundabout you're far from the chord but still heading along it —
         // heading agreement means "still on route" even at a big snap distance (cheap map-matching).
@@ -61,7 +85,10 @@ class NavEngine(private val route: Route) {
 
     private var cursor = 0                 // last snapped segment start index (monotonic-ish)
     private var lastCum = 0.0              // last accepted traveled distance (forward-bias anchor)
-    private var offRouteVotes = 0
+    private var goodAccuracyStreak = 0     // consecutive fixes with accuracy under the gate
+    private var offSinceMs = -1L           // start of the current continuous off-route suspicion (-1 = none)
+    private var offFixes = 0               // fixes in the current suspicion
+    private var puckOnRoute = true
     private var acquired = false           // false until the first successful snap
 
     private val geom = route.geometry
@@ -79,7 +106,8 @@ class NavEngine(private val route: Route) {
         if (geom.size < 2) {
             // Degenerate route — should never happen (Router guards), but never throw in nav.
             val only = geom.firstOrNull() ?: pos
-            return Progress(only, 0, 0.0, 0.0, 0.0, 0.0, null, 0.0, offRoute = false, arrived = false, snapDistanceM = 0.0, currentStreet = "")
+            return Progress(only, 0, 0.0, 0.0, 0.0, 0.0, null, null, 0.0, offRoute = false, offRouteSuspect = false,
+                puckOnRoute = true, arrived = false, snapDistanceM = 0.0, currentStreet = "")
         }
 
         // 1. Snap within a forward window around the cursor; re-acquire globally if far off.
@@ -104,7 +132,7 @@ class NavEngine(private val route: Route) {
         val remaining = (route.totalMeters - traveled).coerceAtLeast(0.0)
 
         // 3. Off-route: speed-tiered distance threshold + heading agreement + accuracy gate +
-        //    consecutive-confirmation. Mirrors Google's principles (a big snap distance alone is
+        //    time-based confirmation. Mirrors Google's principles (a big snap distance alone is
         //    NOT off-route — roundabouts/curves cause that; a wrong HEADING is the real signal).
         val speedKmh = speedMps * 3.6f
         val distThreshold = max(
@@ -115,24 +143,54 @@ class NavEngine(private val route: Route) {
             },
             accuracyM * 1.5,
         )
-        val fixReliable = accuracyM in 0f..ACCURACY_GATE_M.toFloat()
+        // Accuracy-recovery debounce: a fix is trustworthy only after N consecutive good-accuracy
+        // fixes, so a value that JUST recovered from a spike (344m→25m) can't vote yet.
+        if (accuracyM in 0f..ACCURACY_GATE_M.toFloat()) goodAccuracyStreak++ else goodAccuracyStreak = 0
+        val fixReliable = goodAccuracyStreak >= ACCURACY_SETTLE_FIXES
+        // Low-speed guard: a stationary/crawling rider cannot have left the route, and GPS scatter
+        // is worst at rest — never vote off-route below the min speed.
+        val moving = speedMps >= OFF_ROUTE_MIN_SPEED_MPS
         // Heading disagrees with the route direction? (Only trust heading when actually moving.)
         val headingDisagrees = bearingDeg != null && speedMps > 2.0f &&
             angleDiff(bearingDeg.toDouble(), best.bearing) > HEADING_AGREE_DEG
-        // Count a vote only when far AND reliable AND (heading disagrees OR very far = 2x threshold).
+        // Suspect only when MOVING AND far AND reliable AND (heading disagrees OR very far = 2x threshold).
         val farEnough = best.dist > distThreshold
         val veryFar = best.dist > distThreshold * 2
-        if (fixReliable && farEnough && (headingDisagrees || veryFar || bearingDeg == null)) {
-            offRouteVotes++
+        val now = clock()
+        if (moving && fixReliable && farEnough && (headingDisagrees || veryFar || bearingDeg == null)) {
+            if (offSinceMs < 0) offSinceMs = now
+            offFixes++
         } else {
-            offRouteVotes = 0
+            offSinceMs = -1L
+            offFixes = 0
         }
-        val offRoute = offRouteVotes >= OFF_ROUTE_CONSECUTIVE
+        val offRoute = offSinceMs >= 0 && offFixes >= OFF_ROUTE_MIN_FIXES &&
+            now - offSinceMs >= OFF_ROUTE_CONFIRM_MS
+        val offRouteSuspect = offSinceMs >= 0 && !offRoute
+
+        // 3b. Marker placement. Unreliable fixes keep the previous state (a noisy raw point would
+        //     jump around more than the snapped one). Heading disagreement pulls the marker off the
+        //     line early — that's the rider turning off, even before they're far away. Uses the plain
+        //     accuracy gate, not the settle streak: a wrongly-placed marker is cheap to undo, a
+        //     spurious reroute is not.
+        if (accuracyM in 0f..ACCURACY_GATE_M.toFloat()) {
+            val leaveM = max(PUCK_LEAVE_M, accuracyM.toDouble().coerceAtMost(ACCURACY_GATE_M))
+            puckOnRoute = if (puckOnRoute) {
+                !(best.dist > leaveM || (headingDisagrees && best.dist > PUCK_RETURN_M))
+            } else {
+                best.dist < PUCK_RETURN_M && !headingDisagrees
+            }
+        }
 
         // 4. Next maneuver ahead of the snap on the SAME axis (now correct after the axis fix).
-        val next = route.maneuvers.firstOrNull {
+        //    Also the maneuver AFTER that (secondManeuver) — the dash shows its glyph as a small
+        //    secondary icon ("then turn X"). We skip ARRIVE for the secondary so we don't preview
+        //    "arrive" as a turn.
+        val upcoming = route.maneuvers.filter {
             it.cumulativeMeters > traveled + 1.0 && it.type != ManeuverType.DEPART
         }
+        val next = upcoming.firstOrNull()
+        val second = upcoming.getOrNull(1)?.takeIf { it.type != ManeuverType.ARRIVE }
         val distToManeuver = next?.let { (it.cumulativeMeters - traveled).coerceAtLeast(0.0) } ?: remaining
 
         // Current street = the road the rider is on NOW: the last maneuver at or before the snap
@@ -151,7 +209,7 @@ class NavEngine(private val route: Route) {
 
         // NavSessionManager emits the user-facing NAVFIX line; here we keep only the internal
         // matcher detail (cursor + off-route vote count) that isn't in the snapshot.
-        DebugLog.d(TAG) { "match cur=$cursor offv=$offRouteVotes reacq=${best.index}" }
+        DebugLog.d(TAG) { "match cur=$cursor offFixes=$offFixes offMs=${if (offSinceMs < 0) 0 else now - offSinceMs} puck=${if (puckOnRoute) "route" else "raw"} reacq=${best.index}" }
 
         return Progress(
             snapped = best.snap,
@@ -161,8 +219,11 @@ class NavEngine(private val route: Route) {
             remainingMeters = remaining,
             distanceToManeuverM = distToManeuver,
             nextManeuver = next,
+            secondManeuver = second,
             etaSeconds = eta,
             offRoute = offRoute,
+            offRouteSuspect = offRouteSuspect,
+            puckOnRoute = puckOnRoute,
             arrived = arrived,
             snapDistanceM = best.dist,
             currentStreet = currentStreet,

@@ -1,6 +1,5 @@
 package com.recon.dash.dash
 
-import com.recon.dash.dash.nav.ManeuverType
 import com.recon.dash.dash.nav.Route
 import com.recon.dash.dash.protocol.DashCommands
 import com.recon.dash.media.MediaSessionListener
@@ -32,6 +31,7 @@ class NavDashBridge(
     }
 
     private var mediaJob: Job? = null
+    private var callJob: Job? = null
     private var currentRoute: Route? = null
 
     fun startMediaForwarding() {
@@ -45,12 +45,21 @@ class NavDashBridge(
                 }
             }
         }
+        // Incoming-call → dash Phone card. The dash-side (updateCall → 05 22) already existed but
+        // was never driven; CallStateListener is the phone-side event source.
+        callJob?.cancel()
+        callJob = scope.launch {
+            com.recon.dash.media.CallStateListener.incomingCaller.collectLatest { caller ->
+                session.updateCall(caller)
+            }
+        }
     }
 
     fun stopMediaForwarding() {
-        mediaJob?.cancel()
-        mediaJob = null
+        mediaJob?.cancel(); mediaJob = null
+        callJob?.cancel(); callJob = null
         session.updateNowPlaying(null, "", "")
+        session.updateCall(null)
     }
 
     fun startNavigation(route: Route, destinationName: String) {
@@ -65,7 +74,12 @@ class NavDashBridge(
      * consistent and fixed the duplicate-computation drift).
      */
     fun updateProgress(progress: NavProgress) {
-        val maneuverCode = mapManeuverToDashCode(progress.nextManeuver?.type)
+        // Use the maneuver's own verified dash glyph code (see Maneuver.dashCode +
+        // captures/2026-08-05-bench-ownapp/SPEC.md). It reads roundaboutExitCount so a
+        // roundabout renders the correct exit-numbered glyph (0x0B..0x13 = exits 1..9).
+        val maneuverCode = progress.nextManeuver?.dashCode ?: 0x09
+        // Small secondary "then" glyph (05 03): the maneuver AFTER next. null → hidden on the dash.
+        val secondaryCode = progress.secondManeuver?.dashCode
         val (primaryDist, primaryUnit) = toDashDistUnit(progress.distanceToManeuverM)
         val (totalDist, totalUnit) = toDashDistUnit(progress.remainingMeters)
 
@@ -79,6 +93,8 @@ class NavDashBridge(
             totalDist = totalDist,
             totalUnit = totalUnit,
             etaHHMM = etaHHMM,
+            secondaryManeuver = secondaryCode,
+            currentStreet = progress.currentStreet,
         )
     }
 
@@ -89,19 +105,6 @@ class NavDashBridge(
 
     fun updateRoute(route: Route) {
         currentRoute = route
-    }
-
-    private fun mapManeuverToDashCode(type: ManeuverType?): Int = when (type) {
-        ManeuverType.TURN_LEFT -> 0x01
-        ManeuverType.TURN_RIGHT -> 0x02
-        ManeuverType.SLIGHT_LEFT -> 0x03
-        ManeuverType.SLIGHT_RIGHT -> 0x04
-        ManeuverType.SHARP_LEFT -> 0x05
-        ManeuverType.SHARP_RIGHT -> 0x06
-        ManeuverType.UTURN -> 0x07
-        ManeuverType.ROUNDABOUT -> 0x08
-        ManeuverType.ARRIVE -> 0x09
-        else -> DashCommands.NAV_MANEUVER_CONTINUE
     }
 
     private fun toDashDistUnit(meters: Double): Pair<Int, Int> {

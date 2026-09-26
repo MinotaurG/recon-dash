@@ -1,10 +1,14 @@
 package com.recon.dash.dash.nav
 
-/** Maneuver glyphs the dash understands. Only CONTINUE (0x0B) is hardware-verified;
- *  the rest are best-effort guesses and must be checked on fw 11.63. Until then
- *  [Maneuver.dashCode] falls back to CONTINUE so the dash never shows a wrong arrow. */
+/** Maneuver glyphs the dash understands. Glyph byte codes were verified on fw 11.63 via the
+ *  active probe (see captures/2026-08-05-bench-ownapp/SPEC.md); [Maneuver.dashCode] maps each
+ *  type to its verified code and falls back to continue (0x09) for anything unmapped. */
 enum class ManeuverType { CONTINUE, TURN_LEFT, TURN_RIGHT, SLIGHT_LEFT, SLIGHT_RIGHT,
-    SHARP_LEFT, SHARP_RIGHT, UTURN, ROUNDABOUT, DEPART, ARRIVE;
+    SHARP_LEFT, SHARP_RIGHT, UTURN, ROUNDABOUT, DEPART, ARRIVE,
+    // Fork / keep / ramp maneuvers — distinct from a plain slight turn. The dash has dedicated
+    // fork/keep glyphs (SPEC 0x1F/0x20), so these must NOT collapse to SLIGHT_* (that showed a
+    // slight-turn arrow for a "keep left"). See captures/2026-08-05-bench-ownapp/SPEC.md.
+    KEEP_LEFT, KEEP_RIGHT;
 
     companion object {
         /** Map an OSRM step maneuver (type + modifier) to our enum. */
@@ -12,7 +16,15 @@ enum class ManeuverType { CONTINUE, TURN_LEFT, TURN_RIGHT, SLIGHT_LEFT, SLIGHT_R
             "depart"   -> DEPART
             "arrive"   -> ARRIVE
             "roundabout", "rotary" -> ROUNDABOUT
-            "fork", "end of road", "turn", "new name", "continue", "merge", "on ramp", "off ramp" ->
+            // Fork / merge / ramp are "keep" maneuvers (bear left/right onto a branch), NOT slight
+            // turns — give them the dash's dedicated keep glyph so they don't look like a turn.
+            "fork", "merge", "on ramp", "off ramp" ->
+                when (modifier) {
+                    "left", "slight left", "sharp left"    -> KEEP_LEFT
+                    "right", "slight right", "sharp right" -> KEEP_RIGHT
+                    else                                    -> CONTINUE
+                }
+            "end of road", "turn", "new name", "continue" ->
                 when (modifier) {
                     "left"         -> TURN_LEFT
                     "right"        -> TURN_RIGHT
@@ -46,8 +58,39 @@ data class Maneuver(
     /** Name of the road this maneuver travels along (Valhalla street_names); empty if unnamed. */
     val streetName: String = "",
 ) {
-    /** Dash maneuver glyph byte. CONTINUE (0x0B) is the only verified value. */
-    val dashCode: Int get() = 0x0B // TODO: verify other glyph codes on fw 11.63
+    /**
+     * Dash maneuver glyph byte. Codes VERIFIED on fw 11.63 via the active glyph probe
+     * (see captures/2026-08-05-bench-ownapp/SPEC.md — anchored code->glyph capture):
+     *   0x09 continue · 0x0A roundabout(generic) · 0x0B..0x13 roundabout exits 1..9
+     *   0x14 sharp/turn-right · 0x18 turn-left · 0x27 slight-right · (slight-left -> outline 0x16)
+     * The straight-up "continue" arrow is 0x09 (NOT 0x0B as previously assumed; 0x0B is
+     * roundabout-exit-1). Unmapped types fall back to 0x09 so the dash never shows a wrong turn.
+     */
+    val dashCode: Int get() = when (type) {
+        ManeuverType.CONTINUE, ManeuverType.DEPART -> 0x09
+        ManeuverType.ARRIVE       -> 0x09  // no distinct arrive glyph verified; keep straight
+        // Right turns: 0x14 is the verified near-right glyph (SPEC labels it "sharp/turn-right
+        // near" — one glyph covers sharp+normal on the right side).
+        ManeuverType.TURN_RIGHT   -> 0x14
+        ManeuverType.SHARP_RIGHT  -> 0x14
+        // Left turns: the SPEC has a DISTINCT verified sharp-left glyph (0x17 "filled sharp-left")
+        // separate from the normal near-left (0x18). We previously collapsed both to 0x18, so a
+        // sharp left rendered as a gentle left — the bug seen on rides. Use 0x17 for sharp.
+        ManeuverType.TURN_LEFT    -> 0x18
+        ManeuverType.SHARP_LEFT   -> 0x17
+        // Slight turns: 0x27 = verified filled slight-right (near). No verified slight-left-near
+        // exists (0x16 is turn-left FAR/outline, reads as a full turn), so slight-left uses the
+        // near turn-left (0x18) — closer than a far-outline. Revisit if a recapture finds one.
+        ManeuverType.SLIGHT_RIGHT -> 0x27
+        ManeuverType.SLIGHT_LEFT  -> 0x18
+        // Keep/fork/ramp: dedicated fork glyphs, NOT slight-turn arrows (0x1F/0x20 = keep near).
+        ManeuverType.KEEP_LEFT    -> 0x1F
+        ManeuverType.KEEP_RIGHT   -> 0x20
+        ManeuverType.UTURN        -> 0x1A
+        ManeuverType.ROUNDABOUT   ->
+            // 0x0B is exit 1 ... 0x13 is exit 9; generic roundabout (unknown exit) = 0x0A.
+            if (roundaboutExitCount in 1..9) 0x0A + roundaboutExitCount else 0x0A
+    }
 }
 
 /**

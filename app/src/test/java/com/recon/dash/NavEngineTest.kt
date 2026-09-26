@@ -7,6 +7,10 @@ import org.junit.Test
 /** Basic behavior of the stateful [NavEngine] plus [GeoPoint] math. */
 class NavEngineTest {
 
+    // Fake clock: each fix is 1 s after the previous one (off-route confirmation is time-based).
+    private var nowMs = 0L
+    private val tick: () -> Long = { nowMs += 1_000; nowMs }
+
     private fun straightRoute(): Route {
         // South-to-north line: (0,0) → (0.005,0) → (0.01,0), ~1.1 km.
         val geom = listOf(GeoPoint(0.0, 0.0), GeoPoint(0.005, 0.0), GeoPoint(0.01, 0.0))
@@ -30,7 +34,7 @@ class NavEngineTest {
 
     @Test
     fun `snaps rider to route and reports remaining distance`() {
-        val eng = NavEngine(straightRoute())
+        val eng = NavEngine(straightRoute(), tick)
         val p = eng.fix(GeoPoint(0.005, 0.0001)) // slightly off, near midpoint
         assertEquals(0.005, p.snapped.lat, 0.001)
         assertEquals(0.0, p.snapped.lng, 0.001)
@@ -41,23 +45,25 @@ class NavEngineTest {
 
     @Test
     fun `single far fix does not immediately declare off-route (hysteresis)`() {
-        val eng = NavEngine(straightRoute())
+        val eng = NavEngine(straightRoute(), tick)
         val far = GeoPoint(0.005, 0.01) // ~1 km east
         assertFalse("one off fix must not trip off-route", eng.fix(far).offRoute)
     }
 
     @Test
     fun `sustained far fixes declare off-route after hysteresis`() {
-        val eng = NavEngine(straightRoute())
+        val eng = NavEngine(straightRoute(), tick)
         val far = GeoPoint(0.005, 0.01)
         var off = false
-        repeat(6) { off = eng.fix(far).offRoute }
+        // Needs ACCURACY_SETTLE_FIXES (3) good-accuracy fixes to trust the value + OFF_ROUTE_
+        // CONSECUTIVE (5) off votes = 8 total. 10 sustained far fixes comfortably trips it.
+        repeat(10) { off = eng.fix(far).offRoute }
         assertTrue("sustained off-route should trip", off)
     }
 
     @Test
     fun `low-accuracy fixes never vote off-route`() {
-        val eng = NavEngine(straightRoute())
+        val eng = NavEngine(straightRoute(), tick)
         val far = GeoPoint(0.005, 0.01)
         var off = false
         repeat(10) { off = eng.fix(far, acc = 500f).offRoute } // coarse NETWORK-like fix
@@ -66,7 +72,7 @@ class NavEngineTest {
 
     @Test
     fun `arrival requires true destination proximity`() {
-        val eng = NavEngine(straightRoute())
+        val eng = NavEngine(straightRoute(), tick)
         // Walk up to the end.
         eng.fix(GeoPoint(0.0, 0.0)); eng.fix(GeoPoint(0.005, 0.0))
         assertTrue(eng.fix(GeoPoint(0.00999, 0.0)).arrived)
@@ -74,14 +80,14 @@ class NavEngineTest {
 
     @Test
     fun `ETA uses GPS speed when available`() {
-        val fast = NavEngine(straightRoute()).fix(GeoPoint(0.0, 0.0), speed = 20f)
-        val slow = NavEngine(straightRoute()).fix(GeoPoint(0.0, 0.0), speed = 5f)
+        val fast = NavEngine(straightRoute(), tick).fix(GeoPoint(0.0, 0.0), speed = 20f)
+        val slow = NavEngine(straightRoute(), tick).fix(GeoPoint(0.0, 0.0), speed = 5f)
         assertTrue(fast.etaSeconds < slow.etaSeconds)
     }
 
     @Test
     fun `next maneuver skips DEPART`() {
-        val p = NavEngine(straightRoute()).fix(GeoPoint(0.0, 0.0))
+        val p = NavEngine(straightRoute(), tick).fix(GeoPoint(0.0, 0.0))
         assertEquals(ManeuverType.ARRIVE, p.nextManeuver?.type)
     }
 
