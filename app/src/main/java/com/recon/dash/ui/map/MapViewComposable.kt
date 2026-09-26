@@ -76,21 +76,7 @@ fun MapViewComposable(
         mapView.onCreate(null)
         mapView.getMapAsync { map ->
             mapRef[0] = map
-            val styleJson = """
-            {
-              "version": 8,
-              "sources": {
-                "osm": {
-                  "type": "raster",
-                  "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-                  "tileSize": 256,
-                  "attribution": "© OpenStreetMap contributors"
-                }
-              },
-              "layers": [ { "id": "osm", "type": "raster", "source": "osm" } ]
-            }
-            """.trimIndent()
-            map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
+            map.setStyle(Style.Builder().fromJson(baseStyleJson(context))) { style ->
                 styleRef[0] = style
                 map.uiSettings.isLogoEnabled = false
                 map.uiSettings.isAttributionEnabled = false
@@ -258,6 +244,35 @@ private fun applyRoute(
             map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(destination.lat, destination.lng), 15.0))
         }
     }
+}
+
+/**
+ * Base map style. With the all-India map installed this is the bundled dark VECTOR style reading
+ * the local PMTiles directly (fully offline, crisp at every zoom, bundled glyphs — no network at
+ * all). Without it, fall back to online OSM raster tiles so the map isn't blank before download.
+ */
+private fun baseStyleJson(context: android.content.Context): String {
+    val pmtiles = java.io.File(java.io.File(context.filesDir, "pmtiles"), "region.pmtiles")
+    if (pmtiles.exists() && pmtiles.length() > 0) {
+        val template = runCatching {
+            context.assets.open("map/style_dark.json").bufferedReader().use { it.readText() }
+        }.getOrNull()
+        if (template != null) return template.replace("__PMTILES_URL__", "file://${pmtiles.absolutePath}")
+    }
+    return """
+    {
+      "version": 8,
+      "sources": {
+        "osm": {
+          "type": "raster",
+          "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          "tileSize": 256,
+          "attribution": "© OpenStreetMap contributors"
+        }
+      },
+      "layers": [ { "id": "osm", "type": "raster", "source": "osm" } ]
+    }
+    """.trimIndent()
 }
 
 /** Create/update a line layer's geometry in place; optionally insert below another layer. */
