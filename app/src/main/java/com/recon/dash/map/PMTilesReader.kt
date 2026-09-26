@@ -30,6 +30,7 @@ class PMTilesReader(private val file: File) {
         private const val COMPRESSION_GZIP = 2
         private const val COMPRESSION_BROTLI = 3
         private const val COMPRESSION_ZSTD = 4
+        private const val TILE_TYPE_MVT = 1
     }
 
     private var raf: RandomAccessFile? = null
@@ -40,9 +41,14 @@ class PMTilesReader(private val file: File) {
     private var internalCompression = 0
     private var tileCompression = 0
     private var tileType = 0
+    private var maxZoomHeader = 0
     private var isOpen = false
 
     val isValid: Boolean get() = isOpen
+    /** True for vector (MVT) tiles — these need rasterizing, not BitmapFactory. */
+    val isVector: Boolean get() = tileType == TILE_TYPE_MVT
+    /** Deepest zoom stored in the archive; deeper zooms must overzoom from this level. */
+    val maxZoom: Int get() = maxZoomHeader
 
     fun open(): Boolean {
         if (!file.exists()) return false
@@ -76,6 +82,8 @@ class PMTilesReader(private val file: File) {
             internalCompression = buf.get().toInt() and 0xFF  // 97
             tileCompression = buf.get().toInt() and 0xFF       // 98
             tileType = buf.get().toInt() and 0xFF              // 99
+            buf.get()                                          // 100 min zoom
+            maxZoomHeader = buf.get().toInt() and 0xFF         // 101
 
             isOpen = true
             DebugLog.i(TAG) { "Opened ${file.name} — v$version, tileType=$tileType, tileCompress=$tileCompression" }
@@ -86,6 +94,8 @@ class PMTilesReader(private val file: File) {
         }
     }
 
+    // Synchronized: one RandomAccessFile (seek + read) shared by the render and tile-loading threads.
+    @Synchronized
     fun getTile(z: Int, x: Int, y: Int): ByteArray? {
         raf ?: return null
         if (!isOpen) return null

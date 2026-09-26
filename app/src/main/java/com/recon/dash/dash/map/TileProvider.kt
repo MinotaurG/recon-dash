@@ -82,8 +82,12 @@ class TileProvider(context: Context, private val scope: CoroutineScope) {
 
         memory.get(key)?.let { return it }
 
-        // Synchronous PMTiles lookup (fast — local file seek)
-        if (pmtiles.hasPMTiles) {
+        // Vector offline map (the all-India MVT pmtiles): rasterizing takes tens of ms, so it runs
+        // off the render thread like a network fetch; the tile appears on a following frame.
+        val vector = pmtiles.hasPMTiles && pmtiles.isVector
+
+        // Synchronous PMTiles lookup for RASTER archives (fast — local file seek + PNG decode)
+        if (pmtiles.hasPMTiles && !vector) {
             val bmp = pmtiles.getTile(z, xw, y)
             if (bmp != null) {
                 pmtilesHits.incrementAndGet(); logTileStatsMaybe()
@@ -91,13 +95,15 @@ class TileProvider(context: Context, private val scope: CoroutineScope) {
                 return bmp
             }
         }
-        // Not served from the offline bundle -> will be fetched online below.
-        onlineMisses.incrementAndGet(); logTileStatsMaybe()
 
         if (inflight.add(key)) {
             scope.launch(Dispatchers.IO) {
                 try {
-                    val raw = loadDisk(key) ?: fetch(z, xw, y, key)
+                    val offline = if (vector) pmtiles.getTile(z, xw, y) else null
+                    // Not served from the offline bundle -> disk cache / online fetch.
+                    if (offline != null) pmtilesHits.incrementAndGet() else onlineMisses.incrementAndGet()
+                    logTileStatsMaybe()
+                    val raw = offline ?: loadDisk(key) ?: fetch(z, xw, y, key)
                     if (raw != null) memory.put(key, raw)
                 } finally {
                     inflight.remove(key)
