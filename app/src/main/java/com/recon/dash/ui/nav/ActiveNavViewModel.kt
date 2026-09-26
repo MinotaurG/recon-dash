@@ -46,6 +46,8 @@ data class NavDisplayState(
     /** Populated once on arrival so the screen can show a route summary instead of going blank. */
     val summary: RideSummary? = null,
     val offRoute: Boolean = false,
+    /** Off-route confirmed and a new route is being computed — the card shows "Rerouting…". */
+    val rerouting: Boolean = false,
     val speedAlertActive: Boolean = false,
     /**
      * True when the OS Battery Saver is ON. On Samsung One UI, Battery Saver throttles screen-off
@@ -69,8 +71,9 @@ class ActiveNavViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "ActiveNavVM"
-        private const val MIN_REROUTE_INTERVAL_MS = 8_000L
+        private const val MIN_REROUTE_INTERVAL_MS = 6_000L
         private const val REROUTE_ACCURACY_GATE_M = 50f
+        private const val MIN_HEADING_SPEED_MPS = 2f  // ~7 km/h; below this GPS bearing is noise
         // If a real GPS fix arrived within this window, ignore NETWORK-provider fixes entirely.
         private const val GPS_FRESH_MS = 10_000L
         // Cold-start freeze fix: FusedLocationProvider emits coarse ~90m network fixes ~6s apart
@@ -185,18 +188,18 @@ class ActiveNavViewModel @Inject constructor(
         }
     }
 
-    private suspend fun computeRoute(from: GeoPoint, isReroute: Boolean = false) {
+    private suspend fun computeRoute(from: GeoPoint, isReroute: Boolean = false, heading: Float? = null) {
         val to = GeoPoint(destLat, destLng)
         // Track which engine actually produced the route (was a static "valhalla/osrm" string that
         // told us nothing — so we could never tell from logs whether a ride was offline or online).
         var actualSource = "valhalla"
-        var result = router.route(from, to)
+        var result = router.route(from, to, fromHeading = heading)
         if (result is RouterResult.Failure) {
             val why = (result as RouterResult.Failure).error
             DebugLog.w(TAG) { "Offline (valhalla) route failed, trying OSRM online: $why" }
             com.recon.dash.util.NavLog.route("valhalla_fail", 0.0, 0, reroute = isReroute)
             actualSource = "osrm"
-            result = com.recon.dash.dash.nav.OsrmClient.route(from, to)
+            result = com.recon.dash.dash.nav.OsrmClient.route(from, to, heading)
         }
         when (result) {
             is RouterResult.Success -> {
@@ -377,15 +380,11 @@ class ActiveNavViewModel @Inject constructor(
         val suppressMarker = hasHadReliableMarker && !markerReliable
         if (suppressMarker) {
             com.recon.dash.util.NavLog.event("marker_hold", "acc=${accuracy.toInt()} reason=coarse")
-        } else if (progress.offRoute) {
-            // When OFF-route, show the RAW GPS position + heading so the marker follows the rider
-            // away from the stale route instead of freezing on the old line's nearest point.
-            _riderPosition.value = rawPos
-            if (location.hasBearing()) _riderBearing.value = location.bearing
         } else {
-            // ON-route: show the snapped point (rides the line).
-            _riderPosition.value = progress.snapped
-            _riderBearing.value = progress.bearing.toFloat()
+            // Marker rides the line while on it and shows the real GPS position as soon as the rider
+            // leaves it (decided by NavEngine with hysteresis) — the old route stays drawn meanwhile.
+            _riderPosition.value = progress.markerPosition
+            _riderBearing.value = progress.markerBearing.toFloat()
         }
         _travelledGeometry.value = progress.traveledGeometry
         _aheadGeometry.value = progress.aheadGeometry
@@ -403,15 +402,20 @@ class ActiveNavViewModel @Inject constructor(
             currentStreet = progress.currentStreet,
             arrived = progress.arrived,
             offRoute = progress.offRoute,
+            rerouting = progress.offRoute || rerouteInFlight,
             speedAlertActive = alertActive,
             batterySaverOn = isBatterySaverOn(),
         )
 
-        voiceManager?.maybeAnnounce(
-            progress.nextManeuver,
-            progress.distanceToManeuverM,
-            progress.remainingMeters,
-        )
+        // Stay quiet about the OLD route's turns while the rider is off it (suspected or
+        // confirmed) — the next instruction they hear should be from the new route.
+        if (!progress.offRoute && !progress.offRouteSuspect) {
+            voiceManager?.maybeAnnounce(
+                progress.nextManeuver,
+                progress.distanceToManeuverM,
+                progress.remainingMeters,
+            )
+        }
 
         if (progress.arrived && !arrivedHandled) {
             // Reached the destination — end navigation once, save the ride, and let the screen
@@ -423,7 +427,9 @@ class ActiveNavViewModel @Inject constructor(
         } else if (progress.offRoute) {
             // Reroute from the RAW GPS position (where the rider actually IS), not the snapped
             // point on the old route (which is where they left it).
-            maybeReroute(rawPos, accuracy)
+            // Pass the travel heading so the new route continues the way the rider is going
+            // (no heading → Valhalla routed U-turns → rider rode away → reroute loop).
+            maybeReroute(rawPos, accuracy, headingForRouting(location))
         }
     }
 
@@ -533,7 +539,11 @@ class ActiveNavViewModel @Inject constructor(
     @Volatile private var rerouteInFlight = false
     private var lastRerouteAtMs = 0L
 
-    private fun maybeReroute(from: GeoPoint, accuracyM: Float) {
+    /** Travel heading to constrain routing, or null when too slow for GPS bearing to be trustworthy. */
+    private fun headingForRouting(location: Location): Float? =
+        if (location.hasBearing() && location.speed > MIN_HEADING_SPEED_MPS) location.bearing else null
+
+    private fun maybeReroute(from: GeoPoint, accuracyM: Float, heading: Float?) {
         val now = System.currentTimeMillis()
         when {
             rerouteInFlight ->
@@ -545,10 +555,11 @@ class ActiveNavViewModel @Inject constructor(
             else -> {
                 rerouteInFlight = true
                 lastRerouteAtMs = now
-                com.recon.dash.util.NavLog.reroute(fired = true, reason = "offRoute")
+                com.recon.dash.util.NavLog.reroute(fired = true, reason = "offRoute hdg=${heading?.toInt()}")
+                voiceManager?.announceRerouting()
                 viewModelScope.launch {
                     try {
-                        computeRoute(from, isReroute = true)
+                        computeRoute(from, isReroute = true, heading = heading)
                     } finally {
                         rerouteInFlight = false
                     }

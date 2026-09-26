@@ -43,6 +43,7 @@ class MapRenderer(private val tiles: TileProvider) {
         val etaSecondary: String? = null,  // smaller line, e.g. "18 km · 13:32"
         val gpsWeak: Boolean = false,
         val gpsLost: Boolean = false,
+        val rerouting: Boolean = false,    // top pill "Rerouting…" (GPS pills take precedence)
     )
 
     private val bgColor   = Color.rgb(229, 227, 223) // Google Maps land colour, behind missing tiles
@@ -241,9 +242,17 @@ class MapRenderer(private val tiles: TileProvider) {
             }
         }
 
-        if (f.gpsLost || f.gpsWeak) {
-            val label = if (f.gpsLost) "GPS lost" else "GPS weak"
-            gpsPillText.color = if (f.gpsLost) googleRed else Color.rgb(251, 188, 5)
+        if (f.gpsLost || f.gpsWeak || f.rerouting) {
+            val label = when {
+                f.gpsLost -> "GPS lost"
+                f.gpsWeak -> "GPS weak"
+                else -> "Rerouting…"
+            }
+            gpsPillText.color = when {
+                f.gpsLost -> googleRed
+                f.gpsWeak -> Color.rgb(251, 188, 5)
+                else -> Color.WHITE
+            }
             val font = gpsPillText.fontMetrics
             val textHeight = font.descent - font.ascent
             val pillWidth = gpsPillText.measureText(label) + 28f

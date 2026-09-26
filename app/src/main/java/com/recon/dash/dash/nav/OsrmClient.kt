@@ -18,9 +18,12 @@ object OsrmClient {
     private const val BASE = "https://router.project-osrm.org/route/v1/driving"
     private const val UA = "ReconDash/1.0 (motorcycle-nav; single user)"
 
-    suspend fun route(from: GeoPoint, to: GeoPoint): RouterResult = withContext(Dispatchers.IO) {
+    /** @param fromHeading rider's travel heading (degrees) at [from]; see [Router.route]. */
+    suspend fun route(from: GeoPoint, to: GeoPoint, fromHeading: Float? = null): RouterResult = withContext(Dispatchers.IO) {
+        // OSRM `bearings`: one "{bearing},{range}" per coordinate; empty = unconstrained (destination).
+        val bearings = fromHeading?.let { "&bearings=${((it.toInt() % 360) + 360) % 360},45;" } ?: ""
         val url = "$BASE/${from.lng},${from.lat};${to.lng},${to.lat}" +
-                "?overview=full&geometries=polyline&steps=true&alternatives=true"
+                "?overview=full&geometries=polyline&steps=true&alternatives=true" + bearings
         try {
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 setRequestProperty("User-Agent", UA)

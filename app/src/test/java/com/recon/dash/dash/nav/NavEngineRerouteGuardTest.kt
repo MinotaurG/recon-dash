@@ -15,6 +15,10 @@ import org.junit.Test
  */
 class NavEngineRerouteGuardTest {
 
+    // Fake clock: each fix is 1 s after the previous one (off-route confirmation is time-based).
+    private var nowMs = 0L
+    private val tick: () -> Long = { nowMs += 1_000; nowMs }
+
     // A straight ~1 km west-east route near the real HITEC-City coordinates.
     private fun straightRoute(): Route {
         val pts = (0..10).map { GeoPoint(17.4400, 78.3770 + it * 0.001) }  // ~0.001 lon ≈ 106 m steps
@@ -34,7 +38,7 @@ class NavEngineRerouteGuardTest {
     private fun driftedPoint() = GeoPoint(17.4412, 78.3775)  // ~130 m off the 17.4400 line
 
     @Test fun stationaryRiderNeverReroutes_evenWithBigDrift() {
-        val eng = NavEngine(straightRoute())
+        val eng = NavEngine(straightRoute(), tick)
         // Settle on-route first (moving, good accuracy).
         repeat(4) { eng.update(GeoPoint(17.4400, 78.3773), speedMps = 8f, accuracyM = 5f) }
         // Now: stopped (v=0), drifted 130 m, accuracy "good". Many fixes — must NOT go off-route.
@@ -47,7 +51,7 @@ class NavEngineRerouteGuardTest {
     }
 
     @Test fun justRecoveredAccuracyDoesNotImmediatelyReroute() {
-        val eng = NavEngine(straightRoute())
+        val eng = NavEngine(straightRoute(), tick)
         repeat(4) { eng.update(GeoPoint(17.4400, 78.3773), speedMps = 8f, accuracyM = 5f) }
         // Accuracy spike (ignored), then MOVING + drifted + accuracy just "recovered" to 25 m.
         eng.update(driftedPoint(), speedMps = 8f, accuracyM = 344f)
@@ -59,7 +63,7 @@ class NavEngineRerouteGuardTest {
     }
 
     @Test fun genuinelyOffRouteStillReroutes_whenMovingAndSettled() {
-        val eng = NavEngine(straightRoute())
+        val eng = NavEngine(straightRoute(), tick)
         repeat(4) { eng.update(GeoPoint(17.4400, 78.3773), speedMps = 8f, accuracyM = 5f) }
         // Moving, consistently good accuracy, consistently far off with wrong heading (north) —
         // this SHOULD eventually reroute (the guards must not suppress a real off-route).

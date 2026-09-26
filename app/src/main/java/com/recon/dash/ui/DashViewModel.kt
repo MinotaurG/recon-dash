@@ -431,21 +431,24 @@ class DashViewModel @Inject constructor(
                 enc.renderFrame { canvas ->
                     if (navigating && progress != null) {
                         val dest = route?.destination
-                        // Use the SHARED snapped progress: rider rides the snapped line, bearing
-                        // is travel-up, and the route is split into traveled (grey) + ahead (blue).
+                        // Use the SHARED progress: the marker rides the line while on it and shows
+                        // the real GPS position once off it (same as the phone); bearing is
+                        // travel-up; the route is split into traveled (grey) + ahead (blue).
+                        val marker = progress.markerPosition
                         renderer.draw(canvas, MapRenderer.Frame(
-                            centerLat = progress.snapped.lat,
-                            centerLng = progress.snapped.lng,
+                            centerLat = marker.lat,
+                            centerLng = marker.lng,
                             zoom = 17,
                             headingUp = true,
-                            heading = progress.bearing.toFloat(),
-                            riderLat = progress.snapped.lat,
-                            riderLng = progress.snapped.lng,
+                            heading = progress.markerBearing.toFloat(),
+                            riderLat = marker.lat,
+                            riderLng = marker.lng,
                             destLat = dest?.lat,
                             destLng = dest?.lng,
                             destName = destName.ifBlank { null },
                             route = progress.aheadGeometry,
                             travelledRoute = progress.traveledGeometry,
+                            rerouting = progress.offRoute,
                         ))
                     } else if (idle != null) {
                         idle.draw(

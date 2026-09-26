@@ -146,7 +146,19 @@ fun ActiveNavScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        if (navState.nextInstruction != null) {
+                        if (navState.rerouting) {
+                            Text(
+                                text = "Rerouting…",
+                                color = GoldAccent,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = "Finding a new route from here",
+                                color = OnSurface.copy(alpha = 0.7f),
+                                fontSize = 14.sp,
+                            )
+                        } else if (navState.nextInstruction != null) {
                             Text(
                                 text = navState.distToTurnText,
                                 color = GoldAccent,

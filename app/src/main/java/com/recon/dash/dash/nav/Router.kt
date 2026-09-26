@@ -70,11 +70,45 @@ class Router(private val context: Context) {
 
     companion object {
         private const val TAG = "Router"
+        // Origin edge-matching tolerance around the rider's heading on reroutes (Valhalla default 60).
+        private const val HEADING_TOLERANCE_DEG = 45
         private const val TILES_DIR_NAME = "valhalla"
         // The ONE pre-assembled all-India tar the .so routes from (tile_extract, mmap'd). The loose
         // tile_dir path crashes the mobile .so; a proper tar works.
         private const val TILE_EXTRACT_NAME = "valhalla_tiles.tar"
         private const val ROUTE_TIMEOUT_MS = 8_000L
+
+        /** Pure request builder (JVM-testable). */
+        internal fun buildRequest(from: GeoPoint, to: GeoPoint, options: RouteOptions, fromHeading: Float?): String {
+            val root = JSONObject()
+            val locations = org.json.JSONArray()
+            val origin = JSONObject().put("lat", from.lat).put("lon", from.lng)
+            if (fromHeading != null) {
+                // Only match road edges running within ±HEADING_TOLERANCE of the rider's travel direction.
+                origin.put("heading", ((fromHeading.toInt() % 360) + 360) % 360)
+                origin.put("heading_tolerance", HEADING_TOLERANCE_DEG)
+            }
+            locations.put(origin)
+            locations.put(JSONObject().put("lat", to.lat).put("lon", to.lng))
+            root.put("locations", locations)
+            root.put("costing", "motorcycle")
+
+            val costingOptions = JSONObject()
+            val moto = JSONObject()
+            val mode = options.mode
+            moto.put("use_tolls", if (options.avoidTolls) 0.0 else 0.5)
+            moto.put("use_highways", mode.useHighways)
+            moto.put("use_trails", mode.useTrails)
+            moto.put("avoid_bad_surfaces", mode.avoidBadSurfaces)
+            if (mode.shortest) moto.put("shortest", true)
+            moto.put("use_ferry", if (options.avoidFerries) 0.0 else 0.5)
+            costingOptions.put("motorcycle", moto)
+            root.put("costing_options", costingOptions)
+
+            root.put("units", "kilometers")
+            if (options.alternativeRoutes) root.put("alternates", 2)
+            return root.toString()
+        }
     }
 
     private var engine: ValhallaKotlin? = null
@@ -125,10 +159,17 @@ class Router(private val context: Context) {
         }
     }
 
+    /**
+     * @param fromHeading the rider's travel heading (degrees) at [from], or null when stationary /
+     *                    unknown. Pass it on reroutes: without it Valhalla may snap the origin to
+     *                    the opposite direction of the road and start the new route with a U-turn,
+     *                    which the rider rides away from → off-route again → reroute loop.
+     */
     suspend fun route(
         from: GeoPoint,
         to: GeoPoint,
         options: RouteOptions = RouteOptions(),
+        fromHeading: Float? = null,
     ): RouterResult = withContext(Dispatchers.IO) {
         val eng = engine
         val cfg = configPath
@@ -139,7 +180,7 @@ class Router(private val context: Context) {
         }
 
         try {
-            val requestJson = buildRequest(from, to, options)
+            val requestJson = buildRequest(from, to, options, fromHeading)
             // The native route() call is blocking and cannot be interrupted. We run it in a child
             // coroutine and abandon it via withTimeoutOrNull: the caller is freed after the timeout
             // (no request pile-up), though the orphaned native thread runs to completion in the
@@ -173,31 +214,6 @@ class Router(private val context: Context) {
         engine = null
         configPath = null
         isReady = false
-    }
-
-    private fun buildRequest(from: GeoPoint, to: GeoPoint, options: RouteOptions): String {
-        val root = JSONObject()
-        val locations = org.json.JSONArray()
-        locations.put(JSONObject().put("lat", from.lat).put("lon", from.lng))
-        locations.put(JSONObject().put("lat", to.lat).put("lon", to.lng))
-        root.put("locations", locations)
-        root.put("costing", "motorcycle")
-
-        val costingOptions = JSONObject()
-        val moto = JSONObject()
-        val mode = options.mode
-        moto.put("use_tolls", if (options.avoidTolls) 0.0 else 0.5)
-        moto.put("use_highways", mode.useHighways)
-        moto.put("use_trails", mode.useTrails)
-        moto.put("avoid_bad_surfaces", mode.avoidBadSurfaces)
-        if (mode.shortest) moto.put("shortest", true)
-        moto.put("use_ferry", if (options.avoidFerries) 0.0 else 0.5)
-        costingOptions.put("motorcycle", moto)
-        root.put("costing_options", costingOptions)
-
-        root.put("units", "kilometers")
-        if (options.alternativeRoutes) root.put("alternates", 2)
-        return root.toString()
     }
 
     private fun parseResponse(json: String): List<Route> = ValhallaTripParser.parse(json)
